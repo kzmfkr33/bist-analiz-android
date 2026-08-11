@@ -13,12 +13,12 @@ jobs:
       - name: Projeyi indir
         uses: actions/checkout@v4
 
-      - name: Python kur
+      - name: Python 3.11 kur
         uses: actions/setup-python@v5
         with:
           python-version: '3.11.8'
 
-      - name: Java kur
+      - name: Java 17 kur
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -50,25 +50,35 @@ jobs:
       - name: Python araçlarını kur
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install buildozer
+          python -m pip install buildozer==1.5.0
           python -m pip install cython==0.29.36
           python -m pip install python-for-android==2024.01.21
 
-      - name: Ortamı kontrol et
+      - name: Sürümleri kontrol et
         run: |
-          echo "=== Python ==="
+          echo "=============================="
+          echo "HOST PYTHON"
           python --version
+          which python
 
-          echo "=== Buildozer ==="
+          echo "=============================="
+          echo "BUILD OZER"
           buildozer --version
 
-          echo "=== Cython ==="
+          echo "=============================="
+          echo "CYTHON"
           cython --version
 
-          echo "=== python-for-android ==="
-          p4a --version
+          echo "=============================="
+          echo "PYTHON-FOR-ANDROID"
+          python -m pythonforandroid.toolchain --version || true
 
-          echo "=== Java ==="
+          echo "=============================="
+          echo "P4A LOCATION"
+          python -c "import pythonforandroid; print(pythonforandroid.__file__)"
+
+          echo "=============================="
+          echo "JAVA"
           java -version
 
       - name: Eski Buildozer ortamını temizle
