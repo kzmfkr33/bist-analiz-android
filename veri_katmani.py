@@ -157,3 +157,40 @@ def doviz_altin_emtia_getir(periyot="1mo"):
         except Exception as hata:
             log.warning(f"{isim} ({sembol}) verisi alınamadı: {hata}")
     return sonuclar
+def gecmis_finansal_veriler_getir(sembol, yil_sayisi=4):
+    """
+    Son yıllara ait satış, net kâr ve FAVÖK (yaklaşık) verilerini getirir.
+    Kaynak: Yahoo Finance quoteSummary 'incomeStatementHistory' modülü.
+
+    Not: FAVÖK burada EBIT (faiz ve vergi öncesi kâr) ile yaklaşık
+    alınmıştır — amortisman verisi her şirket için ayrı gelmediğinden tam
+    FAVÖK değil, yakın bir vekildir. Kesin FAVÖK için resmi bilançoya
+    bakılmalıdır.
+    """
+    url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{sembol}"
+    params = {"modules": "incomeStatementHistory"}
+
+    try:
+        yanit = requests.get(url, params=params, headers=_HEADERS, timeout=15)
+        yanit.raise_for_status()
+        sonuc = yanit.json()["quoteSummary"]["result"][0]
+        yillik_kayitlar = sonuc.get("incomeStatementHistory", {}).get("incomeStatementHistory", [])
+
+        def _ham(kayit, anahtar):
+            return kayit.get(anahtar, {}).get("raw") if kayit.get(anahtar) else None
+
+        veriler = []
+        for kayit in yillik_kayitlar[:yil_sayisi]:
+            veriler.append({
+                "yil": kayit.get("endDate", {}).get("fmt", "")[:4],
+                "satis": _ham(kayit, "totalRevenue"),
+                "net_kar": _ham(kayit, "netIncome"),
+                "favok_yaklasik": _ham(kayit, "ebit"),
+            })
+
+        veriler.sort(key=lambda v: v["yil"])
+        return veriler
+
+    except Exception as hata:
+        log.warning(f"{sembol} geçmiş finansal verisi alınamadı: {hata}")
+        return []
