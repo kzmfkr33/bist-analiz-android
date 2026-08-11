@@ -1,4 +1,5 @@
 [app]
+
 title = BIST Analiz Merkezi
 package.name = bistanaliz
 package.domain = org.bistanaliz
@@ -16,14 +17,16 @@ fullscreen = 0
 icon.filename = %(source.dir)s/icon.png
 
 android.permissions = INTERNET
+
 android.api = 34
 android.minapi = 24
 android.ndk = 28c
 android.archs = arm64-v8a,armeabi-v7a
 android.allow_backup = True
 
+p4a.branch = master
+
 [buildozer]
+
 log_level = 2
 warn_on_root = 1
-
-p4a.branch = master
