@@ -1,19 +1,23 @@
 from veri_katmani import fiyat_verisi_getir, temel_veri_getir
 from gostergeler import (
-    rsi_hesapla, hareketli_ortalama, macd_hesapla, bollinger_bantlari,
-    stochastic_hesapla, atr_hesapla, obv_hesapla
+    rsi_hesapla, hareketli_ortalama, ema_hesapla, macd_hesapla, bollinger_bantlari,
+    stochastic_hesapla, atr_hesapla, obv_hesapla, adx_hesapla, cci_hesapla,
+    williams_r_hesapla, roc_hesapla, relative_volume_hesapla, mfi_hesapla,
+    cmf_hesapla, keltner_kanali, standart_sapma_hesapla, supertrend_hesapla,
 )
 from sinyal_motoru import sinyal_uret
 from temel_analiz import temel_puanla
 
 
 def analiz_et(sembol):
-    """Sadece teknik analiz — hızlı, toplu taramalarda kullanılır."""
+    """Teknik analiz için tüm göstergeleri hesaplar — screener taramasında kullanılır."""
     veri = fiyat_verisi_getir(sembol)
 
     veri['RSI'] = rsi_hesapla(veri)
     veri['SMA20'] = hareketli_ortalama(veri, 20)
     veri['SMA50'] = hareketli_ortalama(veri, 50)
+    veri['EMA20'] = ema_hesapla(veri, 20)
+    veri['EMA50'] = ema_hesapla(veri, 50)
 
     macd_cizgisi, sinyal_cizgisi = macd_hesapla(veri)
     veri['MACD'] = macd_cizgisi
@@ -29,6 +33,27 @@ def analiz_et(sembol):
 
     veri['ATR'] = atr_hesapla(veri)
     veri['OBV'] = obv_hesapla(veri)
+
+    adx, pdi, ndi = adx_hesapla(veri)
+    veri['ADX'] = adx
+    veri['PDI'] = pdi
+    veri['NDI'] = ndi
+
+    veri['CCI'] = cci_hesapla(veri)
+    veri['Williams_R'] = williams_r_hesapla(veri)
+    veri['ROC'] = roc_hesapla(veri)
+    veri['RVOL'] = relative_volume_hesapla(veri)
+    veri['MFI'] = mfi_hesapla(veri)
+    veri['CMF'] = cmf_hesapla(veri)
+
+    kk_ust, kk_orta, kk_alt = keltner_kanali(veri)
+    veri['Keltner_Ust'] = kk_ust
+    veri['Keltner_Alt'] = kk_alt
+    veri['StdSapma'] = standart_sapma_hesapla(veri)
+
+    st, st_yon = supertrend_hesapla(veri)
+    veri['Supertrend'] = st
+    veri['Supertrend_Yon'] = st_yon
 
     return veri
 
