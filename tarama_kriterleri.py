@@ -9,8 +9,11 @@ KRITER_DOSYASI = "kayitli_kriterler.json"
 
 # Kriterlerde kullanılabilecek alanlar ve operatörler
 KULLANILABILIR_ALANLAR = [
-    "puan", "kapanis_fiyati",
-    "RSI", "SMA20", "SMA50", "MACD", "MACD_Sinyal", "Stoch_K", "ATR_Yuzde", "OBV_Yonu"
+    "puan", "kapanis_fiyati", "degisim_yuzde_1g", "degisim_yuzde_1h",
+    "RSI", "SMA20", "SMA50", "EMA20", "EMA50", "MACD", "MACD_Sinyal",
+    "Stoch_K", "ATR_Yuzde", "OBV_Yonu", "ADX", "CCI", "Williams_R", "ROC",
+    "RVOL", "MFI", "CMF", "Supertrend_Yon",
+    "fk_orani", "pd_dd_orani", "roe", "temettu_verimi",
 ]
 KULLANILABILIR_OPERATORLER = ["<", "<=", ">", ">=", "=="]
 
