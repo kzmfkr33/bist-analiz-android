@@ -27,6 +27,7 @@ jobs:
       - name: Sistem bağımlılıklarını kur
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             zip \
@@ -45,36 +46,42 @@ jobs:
             libssl-dev \
             build-essential \
             libltdl-dev \
-            gettext
+            gettext \
+            ccache
 
-      - name: Buildozer ve python-for-android kur
+      - name: Buildozer kur
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install buildozer==1.5.0
-          python -m pip install cython==0.29.36
-          python -m pip install python-for-android==2024.01.21
 
-      - name: Sürümleri kontrol et
+      - name: Güncel python-for-android kur
         run: |
-          echo "========== HOST PYTHON =========="
+          python -m pip install python-for-android==2026.05.09
+
+      - name: Ortamı kontrol et
+        run: |
+          echo "======================================"
+          echo "PYTHON"
+          echo "======================================"
           python --version
 
-          echo "========== BUILDOZER =========="
+          echo "======================================"
+          echo "BUILDOZER"
+          echo "======================================"
           buildozer --version
 
-          echo "========== CYTHON =========="
-          cython --version
-
-          echo "========== P4A =========="
-          python -m pythonforandroid.toolchain --version
-
-          echo "========== P4A LOCATION =========="
+          echo "======================================"
+          echo "PYTHON-FOR-ANDROID"
+          echo "======================================"
+          python -c "import pythonforandroid; print(pythonforandroid.__version__)"
           python -c "import pythonforandroid; print(pythonforandroid.__file__)"
 
-          echo "========== JAVA =========="
+          echo "======================================"
+          echo "JAVA"
+          echo "======================================"
           java -version
 
-      - name: Eski Buildozer dosyalarını temizle
+      - name: Eski Buildozer ortamını temizle
         run: |
           rm -rf .buildozer
           rm -rf bin
@@ -82,7 +89,9 @@ jobs:
       - name: APK derle
         run: |
           set -o pipefail
+
           yes | buildozer -v android debug 2>&1 | tee buildozer_log.txt
+
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
 
