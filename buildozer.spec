@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,kv,atlas,json
 
 version = 1.0
 
-requirements = python3,kivy==2.3.0,pandas,numpy,requests,certifi
+requirements = python3==3.11.8,kivy==2.3.0,pandas,numpy,requests,certifi
 
 orientation = portrait
 fullscreen = 0
@@ -25,3 +25,5 @@ android.allow_backup = True
 [buildozer]
 log_level = 2
 warn_on_root = 1
+
+p4a.branch = master
