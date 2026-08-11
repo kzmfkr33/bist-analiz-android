@@ -15,7 +15,8 @@ jobs:
       - name: Python kur
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.11.8'
+          cache: 'pip'
 
       - name: Java kur
         uses: actions/setup-java@v4
@@ -26,14 +27,44 @@ jobs:
       - name: Sistem bağımlılıklarını kur
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip autoconf automake autopoint libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev \
-            libssl-dev build-essential libltdl-dev gettext
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            autoconf \
+            automake \
+            autopoint \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo5 \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            build-essential \
+            libltdl-dev \
+            gettext
 
       - name: Buildozer ve bağımlılıklarını kur
         run: |
-          pip install --upgrade pip setuptools wheel
-          pip install buildozer cython==0.29.36
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install buildozer
+          python -m pip install cython==0.29.34
+
+      - name: Ortamı kontrol et
+        run: |
+          python --version
+          python -m pip --version
+          buildozer --version
+          cython --version
+          java -version
+
+      - name: Eski Buildozer ortamını temizle
+        run: |
+          rm -rf .buildozer
+          rm -rf bin
 
       - name: APK derle (debug)
         run: |
