@@ -11,15 +11,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: APK derle
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+      - name: Python kur
+        uses: actions/setup-python@v5
         with:
-          command: buildozer android debug
-          buildozer_version: stable
+          python-version: '3.11'
+
+      - name: Java kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Sistem bağımlılıklarını kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev \
+            libssl-dev build-essential libltdl-dev
+
+      - name: Buildozer ve bağımlılıklarını kur
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install buildozer cython==0.29.36
+
+      - name: APK derle (debug)
+        run: |
+          yes | buildozer -v android debug 2>&1 | tee buildozer_log.txt
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
+
+      - name: Derleme logunu her durumda yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: |
+            buildozer_log.txt
+            .buildozer/android/platform/build-*/build.log
+          if-no-files-found: ignore
 
       - name: APK'yı yükle
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: bist-analiz-apk
-          path: ${{ steps.buildozer.outputs.filename }}
+          path: bin/*.apk
