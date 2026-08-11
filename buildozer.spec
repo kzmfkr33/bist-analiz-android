@@ -9,7 +9,7 @@ source.include_exts = py,png,jpg,kv,atlas,json
 
 version = 1.0
 
-requirements = python3==3.11.8,hostpython3==3.11.8,kivy==2.3.0,pandas,numpy,requests,certifi
+requirements = python3==3.11.8,kivy==2.3.0,pandas,numpy,requests,certifi
 
 orientation = portrait
 fullscreen = 0
@@ -20,11 +20,9 @@ android.permissions = INTERNET
 
 android.api = 34
 android.minapi = 24
-android.ndk = 28c
+android.ndk = 25b
 android.archs = arm64-v8a,armeabi-v7a
 android.allow_backup = True
-
-p4a.branch = master
 
 [buildozer]
 
