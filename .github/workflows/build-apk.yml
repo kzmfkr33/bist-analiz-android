@@ -10,13 +10,13 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Projeyi indir
+        uses: actions/checkout@v4
 
       - name: Python kur
         uses: actions/setup-python@v5
         with:
           python-version: '3.11.8'
-          cache: 'pip'
 
       - name: Java kur
         uses: actions/setup-java@v4
@@ -47,7 +47,7 @@ jobs:
             libltdl-dev \
             gettext
 
-      - name: Buildozer ve bağımlılıklarını kur
+      - name: Python araçlarını kur
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install buildozer
@@ -55,10 +55,17 @@ jobs:
 
       - name: Ortamı kontrol et
         run: |
+          echo "=== Python ==="
           python --version
           python -m pip --version
+
+          echo "=== Buildozer ==="
           buildozer --version
+
+          echo "=== Cython ==="
           cython --version
+
+          echo "=== Java ==="
           java -version
 
       - name: Eski Buildozer ortamını temizle
@@ -66,14 +73,14 @@ jobs:
           rm -rf .buildozer
           rm -rf bin
 
-      - name: APK derle (debug)
+      - name: APK derle
         run: |
           set -o pipefail
           yes | buildozer -v android debug 2>&1 | tee buildozer_log.txt
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
 
-      - name: Derleme logunu her durumda yükle
+      - name: Derleme logunu yükle
         if: always()
         uses: actions/upload-artifact@v4
         with:
