@@ -4,6 +4,7 @@ from gostergeler import (
     stochastic_hesapla, atr_hesapla, obv_hesapla, adx_hesapla, cci_hesapla,
     williams_r_hesapla, roc_hesapla, relative_volume_hesapla, mfi_hesapla,
     cmf_hesapla, keltner_kanali, standart_sapma_hesapla, supertrend_hesapla,
+    vwma_hesapla,
 )
 from sinyal_motoru import sinyal_uret
 from temel_analiz import temel_puanla
@@ -54,6 +55,8 @@ def analiz_et(sembol):
     st, st_yon = supertrend_hesapla(veri)
     veri['Supertrend'] = st
     veri['Supertrend_Yon'] = st_yon
+
+    veri['VWMA20'] = vwma_hesapla(veri, 20)
 
     return veri
 
