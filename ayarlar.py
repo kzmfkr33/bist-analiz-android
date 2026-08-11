@@ -1,7 +1,7 @@
 import json
 import os
 
-# GÜVENLİK NOTU: Telegram/Anthropic gibi API anahtarlarını asla doğrudan bu
+# GÜVENLİK NOTU: Telegram/Gemini gibi API anahtarlarını asla doğrudan bu
 # dosyaya (ve dolayısıyla APK'nın içine) yazma — APK'yı paylaşırsan anahtarın
 # da dağılır. Bunun yerine uygulama içindeki "Ayarlar" ekranından gireriz;
 # değerler cihazdaki ayarlar.json dosyasında (APK dışında) saklanır.
@@ -12,7 +12,7 @@ VARSAYILAN_AYARLAR = {
     "toplam_sermaye": 100000,
     "telegram_bot_token": "",
     "telegram_chat_id": "",
-    "anthropic_api_key": "",
+    "gemini_api_key": "",
 }
 
 
@@ -41,4 +41,4 @@ def ayarlari_kaydet(yeni_ayarlar):
 # geriye dönük uyumluluk için:
 _ayarlar = ayarlari_oku()
 TOPLAM_SERMAYE = _ayarlar["toplam_sermaye"]
-ANTHROPIC_API_KEY = _ayarlar["anthropic_api_key"]
+GEMINI_API_KEY = _ayarlar["gemini_api_key"]
