@@ -13,7 +13,7 @@ jobs:
       - name: Projeyi indir
         uses: actions/checkout@v4
 
-      - name: Python 3.11 kur
+      - name: Python 3.11.8 kur
         uses: actions/setup-python@v5
         with:
           python-version: '3.11.8'
@@ -21,7 +21,7 @@ jobs:
       - name: Java 17 kur
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - name: Sistem bağımlılıklarını kur
@@ -47,7 +47,7 @@ jobs:
             libltdl-dev \
             gettext
 
-      - name: Python araçlarını kur
+      - name: Buildozer ve python-for-android kur
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install buildozer==1.5.0
@@ -56,32 +56,25 @@ jobs:
 
       - name: Sürümleri kontrol et
         run: |
-          echo "=============================="
-          echo "HOST PYTHON"
+          echo "========== HOST PYTHON =========="
           python --version
-          which python
 
-          echo "=============================="
-          echo "BUILD OZER"
+          echo "========== BUILDOZER =========="
           buildozer --version
 
-          echo "=============================="
-          echo "CYTHON"
+          echo "========== CYTHON =========="
           cython --version
 
-          echo "=============================="
-          echo "PYTHON-FOR-ANDROID"
-          python -m pythonforandroid.toolchain --version || true
+          echo "========== P4A =========="
+          python -m pythonforandroid.toolchain --version
 
-          echo "=============================="
-          echo "P4A LOCATION"
+          echo "========== P4A LOCATION =========="
           python -c "import pythonforandroid; print(pythonforandroid.__file__)"
 
-          echo "=============================="
-          echo "JAVA"
+          echo "========== JAVA =========="
           java -version
 
-      - name: Eski Buildozer ortamını temizle
+      - name: Eski Buildozer dosyalarını temizle
         run: |
           rm -rf .buildozer
           rm -rf bin
