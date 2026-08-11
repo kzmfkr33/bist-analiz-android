@@ -58,6 +58,11 @@ jobs:
         run: |
           python -m pip install "Cython<4.0.0a0"
 
+      - name: Pip'i sabit sürümde tut (self-upgrade hatasını önle)
+        run: |
+          echo "pip==24.0" > "$HOME/pip-constraint.txt"
+          echo "PIP_CONSTRAINT=$HOME/pip-constraint.txt" >> "$GITHUB_ENV"
+
       - name: Güncel python-for-android kur
         run: |
           python -m pip install python-for-android==2026.05.09
