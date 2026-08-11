@@ -99,7 +99,8 @@ jobs:
         run: |
           set -o pipefail
 
-          yes | buildozer -v android debug 2>&1 | tee buildozer_log.txt
+          yes | buildozer -v android debug 2>&1 | tee buildozer_log.txt || true
+          exit ${PIPESTATUS[1]}
 
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
