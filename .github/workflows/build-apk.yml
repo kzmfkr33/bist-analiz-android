@@ -27,7 +27,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git zip unzip autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev \
-            libssl-dev build-essential libltdl-dev
+            libssl-dev build-essential libltdl-dev gettext
 
       - name: Buildozer ve bağımlılıklarını kur
         run: |
