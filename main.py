@@ -46,6 +46,7 @@ from tarama_kriterleri import kriterlere_gore_filtrele          # noqa: E402
 from risk_yonetimi import atr_ile_stop_onerisi, pozisyon_buyuklugu_hesapla  # noqa: E402
 from portfoy import pozisyon_ekle, portfoy_ozeti                # noqa: E402
 import ayarlar                                                  # noqa: E402
+import ai_yorum                                                 # noqa: E402
 
 RENK_ARKAPLAN = (0.07, 0.09, 0.13, 1)
 RENK_KART = (0.12, 0.15, 0.20, 1)
@@ -221,6 +222,42 @@ class AnalizEkrani(Screen):
         risk_kart.add_widget(ekle_btn)
         risk_kart.add_widget(risk_kutusu)
         self.sonuc_kutusu.add_widget(risk_kart)
+
+        ai_kart = KartKutu()
+        ai_kart.add_widget(baslik_etiketi("AI Yorum (Gemini)", 16))
+        ai_btn = Button(text="Yorum Üret", size_hint_y=None, height=dp(40),
+                         background_color=RENK_VURGU)
+        ai_kutusu = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(4))
+        ai_kutusu.bind(minimum_height=ai_kutusu.setter("height"))
+
+        def _ai_yorum_uret(*_a, sonuc=sonuc, kutu=ai_kutusu):
+            kutu.clear_widgets()
+            kutu.add_widget(govde_etiketi("Yorum üretiliyor..."))
+
+            def _isle():
+                try:
+                    api_key = ayarlar.ayarlari_oku()["gemini_api_key"]
+                    metin = ai_yorum.hisse_yorumu_uret(sonuc, api_key)
+                    Clock.schedule_once(
+                        lambda dt: (kutu.clear_widgets(), kutu.add_widget(govde_etiketi(metin)))
+                    )
+                except ai_yorum.AIYorumHatasi as e:
+                    Clock.schedule_once(
+                        lambda dt: (kutu.clear_widgets(),
+                                     kutu.add_widget(govde_etiketi(str(e), renk=RENK_OLUMSUZ)))
+                    )
+                except Exception as e:
+                    Clock.schedule_once(
+                        lambda dt: (kutu.clear_widgets(),
+                                     kutu.add_widget(govde_etiketi(f"Beklenmeyen hata: {e}", renk=RENK_OLUMSUZ)))
+                    )
+
+            threading.Thread(target=_isle, daemon=True).start()
+
+        ai_btn.bind(on_release=_ai_yorum_uret)
+        ai_kart.add_widget(ai_btn)
+        ai_kart.add_widget(ai_kutusu)
+        self.sonuc_kutusu.add_widget(ai_kart)
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +462,11 @@ class AyarlarEkrani(Screen):
                                          size_hint_y=None, height=dp(42))
         kok.add_widget(self.sermaye_girisi)
 
-        kok.add_widget(govde_etiketi("Anthropic API Key (opsiyonel, AI yorumlar için)"))
-        self.api_key_girisi = TextInput(text=mevcut["anthropic_api_key"],
+        kok.add_widget(govde_etiketi("Google Gemini API Key (opsiyonel, AI yorumlar için)"))
+        kok.add_widget(govde_etiketi(
+            "Ücretsiz anahtar: aistudio.google.com/app/apikey", renk=RENK_NOTR
+        ))
+        self.api_key_girisi = TextInput(text=mevcut["gemini_api_key"],
                                          multiline=False, password=True,
                                          size_hint_y=None, height=dp(42))
         kok.add_widget(self.api_key_girisi)
@@ -449,7 +489,7 @@ class AyarlarEkrani(Screen):
             sermaye = 100000
         ayarlar.ayarlari_kaydet({
             "toplam_sermaye": sermaye,
-            "anthropic_api_key": self.api_key_girisi.text.strip(),
+            "gemini_api_key": self.api_key_girisi.text.strip(),
         })
         self.durum_etiketi.text = "Kaydedildi."
 
