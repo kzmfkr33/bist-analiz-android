@@ -1,0 +1,109 @@
+"""
+Android derlemesini basitleştirmek için yfinance yerine doğrudan Yahoo
+Finance'in genel JSON uçlarına 'requests' ile istek atıyoruz. yfinance'ın
+kendisi de arka planda aynı uçları kullanır; burada sadece lxml/peewee gibi
+python-for-android'de sorun çıkarabilecek ek bağımlılıkları elimine ediyoruz.
+"""
+import time
+
+import pandas as pd
+import requests
+
+from log_ayarlari import logger_al
+
+log = logger_al(__name__)
+
+_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+_PERIYOT_GUN = {
+    "1mo": 31, "2mo": 62, "3mo": 93, "6mo": 186, "1y": 372, "2y": 744,
+}
+
+
+def fiyat_verisi_getir(sembol, periyot="3mo", deneme_sayisi=3):
+    """
+    Belirtilen hissenin geçmiş fiyat verisini Yahoo Finance 'chart' API'sinden
+    getirir. Bağlantı hatası olursa katlanarak artan bekleme süresiyle
+    birkaç kez tekrar dener.
+    """
+    aralik_gun = _PERIYOT_GUN.get(periyot, 93)
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sembol}"
+    params = {"range": periyot, "interval": "1d"}
+
+    for deneme in range(deneme_sayisi):
+        try:
+            yanit = requests.get(url, params=params, headers=_HEADERS, timeout=15)
+            yanit.raise_for_status()
+            veri_json = yanit.json()
+
+            sonuc = veri_json.get("chart", {}).get("result")
+            if not sonuc:
+                hata_msg = veri_json.get("chart", {}).get("error")
+                raise ValueError(f"{sembol} için veri boş döndü ({hata_msg})")
+
+            r = sonuc[0]
+            zaman_damgalari = r.get("timestamp")
+            if not zaman_damgalari:
+                raise ValueError(f"{sembol} için veri boş döndü")
+
+            fiyatlar = r["indicators"]["quote"][0]
+            df = pd.DataFrame({
+                "Open": fiyatlar.get("open"),
+                "High": fiyatlar.get("high"),
+                "Low": fiyatlar.get("low"),
+                "Close": fiyatlar.get("close"),
+                "Volume": fiyatlar.get("volume"),
+            }, index=pd.to_datetime(zaman_damgalari, unit="s"))
+
+            df = df.dropna(subset=["Close"])
+            if df.empty:
+                raise ValueError(f"{sembol} için veri boş döndü")
+
+            return df
+
+        except Exception as hata:
+            if deneme < deneme_sayisi - 1:
+                bekleme = 2 ** deneme
+                log.warning(f"{sembol} verisi alınamadı ({hata}), {bekleme}sn sonra tekrar deneniyor...")
+                time.sleep(bekleme)
+            else:
+                log.error(f"{sembol} verisi {deneme_sayisi} denemeden sonra da alınamadı: {hata}")
+                raise
+
+
+def temel_veri_getir(sembol):
+    """
+    Şirketin temel (fundamental) verilerini getirir:
+    F/K oranı, PD/DD oranı, piyasa değeri, temettü verimi, sektör.
+    Not: Yahoo Finance bazı BIST hisseleri için bu verilerin bir kısmını
+    döndürmeyebilir (None olarak gelebilir) — bu normaldir.
+    """
+    url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{sembol}"
+    params = {"modules": "summaryDetail,defaultKeyStatistics,price,assetProfile"}
+
+    try:
+        yanit = requests.get(url, params=params, headers=_HEADERS, timeout=15)
+        yanit.raise_for_status()
+        sonuc = yanit.json()["quoteSummary"]["result"][0]
+
+        ozet = sonuc.get("summaryDetail", {})
+        istat = sonuc.get("defaultKeyStatistics", {})
+        fiyat = sonuc.get("price", {})
+        profil = sonuc.get("assetProfile", {})
+
+        def _ham(alan_sozlugu, anahtar):
+            return alan_sozlugu.get(anahtar, {}).get("raw") if alan_sozlugu.get(anahtar) else None
+
+        return {
+            "sembol": sembol,
+            "sirket_adi": fiyat.get("longName"),
+            "sektor": profil.get("sector"),
+            "fk_orani": _ham(ozet, "trailingPE") or _ham(istat, "trailingPE"),
+            "pd_dd_orani": _ham(istat, "priceToBook"),
+            "piyasa_degeri": _ham(fiyat, "marketCap") or _ham(ozet, "marketCap"),
+            "temettu_verimi": _ham(ozet, "dividendYield"),
+            "52_hafta_yuksek": _ham(ozet, "fiftyTwoWeekHigh"),
+            "52_hafta_dusuk": _ham(ozet, "fiftyTwoWeekLow"),
+        }
+    except Exception as hata:
+        log.warning(f"{sembol} temel verisi alınamadı: {hata}")
+        return {"sembol": sembol}
