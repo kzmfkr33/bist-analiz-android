@@ -10,10 +10,13 @@ from sinyal_motoru import sinyal_uret
 from temel_analiz import temel_puanla
 
 
-def analiz_et(sembol):
-    """Teknik analiz için tüm göstergeleri hesaplar — screener taramasında kullanılır."""
-    veri = fiyat_verisi_getir(sembol)
-
+def analiz_et(sembol, periyot="3mo"):
+    """
+    Teknik analiz için tüm göstergeleri hesaplar. Varsayılan periyot ekran
+    taramaları için hızlı olsun diye "3mo"; Backtest gibi daha uzun geçmiş
+    gerektiren modüller periyot="1y" veya "2y" ile çağırabilir.
+    """
+    veri = fiyat_verisi_getir(sembol, periyot=periyot)
     veri['RSI'] = rsi_hesapla(veri)
     veri['SMA20'] = hareketli_ortalama(veri, 20)
     veri['SMA50'] = hareketli_ortalama(veri, 50)
