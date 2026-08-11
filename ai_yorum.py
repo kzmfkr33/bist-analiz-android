@@ -1,21 +1,23 @@
 """
-Google Gemini API ile hisse analizine dair kısa, doğal dilde yorum üretir.
+Google Gemini API ile hisse analizine dair kısa, doğal dilde yorum üretir — plan madde 18.
 
-Neden Gemini?
-  - Ücretsiz katmanı var (kredi kartı istemiyor, süresi dolmuyor).
-  - Kişisel/hobi ölçekli kullanım (günde birkaç istek) için bu katman
-    fazlasıyla yeterli.
-  - Tek bir HTTPS isteği (requests) ile çalışıyor; ekstra ağır bir SDK
-    kurmaya gerek yok, bu da Android derlemesini (buildozer/p4a) daha
-    sağlam tutar.
-
-Ücretsiz API anahtarı almak için: https://aistudio.google.com/app/apikey
-
-NOT: Burada üretilen metin yatırım tavsiyesi değildir; sadece uygulamanın
-kendi kural tabanlı puanlamasının (teknik + temel) doğal dile çevrilmiş,
-kısa bir özetidir.
+AI'nın görevi TAHMİN üretmek değil, hesaplama motorlarının (hisse skoru,
+teknik sinyal merkezi, destek/direnç, sektöre göre değerleme, fırsat
+tarayıcı) ürettiği rakamları yorumlamaktır. Tüm sayılar önceden
+hesaplanmış motorlardan gelir ve prompt içinde AI'ya olduğu gibi verilir
+— AI hiçbir rakamı kendisi üretmez, sadece anlaşılır Türkçeye çevirir.
+Bu sayede kaynak/hesaplama mantığı her zaman izlenebilir kalır.
 """
 import requests
+
+from test import analiz_et
+from veri_katmani import temel_veri_getir
+from hisse_skoru import hisse_skoru_hesapla
+from teknik_sinyal_merkezi import teknik_gorunum_uret
+from destek_direnc import destek_direnc_bul
+from firsat_tarayici import firsatlari_tespit_et
+from relative_guc import relative_strength_hesapla, bist100_getir
+from temel_analiz import sektore_gore_degerleme
 
 _GEMINI_MODEL = "gemini-2.5-flash"
 _GEMINI_URL = (
@@ -28,32 +30,115 @@ class AIYorumHatasi(Exception):
     pass
 
 
-def _prompt_olustur(sonuc):
-    teknik_satirlar = "\n".join(f"- {d}" for d in sonuc.get("teknik_detaylar", []))
-    temel_satirlar = "\n".join(f"- {d}" for d in sonuc.get("temel_detaylar", []))
+def zengin_analiz_verisi_olustur(sembol, sektordeki_diger_hisseler=None):
+    """
+    Bir hisse için AI yorumunun dayanacağı TÜM ham veriyi tek yerde toplar.
+    Döndürülen sözlükteki her rakam ayrı bir hesaplama motorundan gelir
+    (tahmin değil, gerçek hesaplama) — AI sadece bunu yorumlar.
+
+    sektordeki_diger_hisseler: (opsiyonel) aynı sektördeki diğer hisselerin
+        temel_veri_getir() çıktıları — verilirse "değerleme" bölümüne
+        sektöre göre iskonto/prim bilgisi eklenir. UI adımında bunu
+        tarayici.py'nin zaten topladığı sonuçlardan sektöre göre
+        filtreleyerek vereceğiz (tekrar API çağrısı yapmadan).
+    """
+    veri = analiz_et(sembol)
+    temel = temel_veri_getir(sembol)
+    skor = hisse_skoru_hesapla(veri, temel)
+    teknik_gorunum = teknik_gorunum_uret(veri.iloc[-1])
+    seviyeler = destek_direnc_bul(veri)
+    firsatlar = firsatlari_tespit_et(veri)
+
+    try:
+        rs = relative_strength_hesapla(veri, bist100_getir())
+    except Exception:
+        rs = {}
+
+    degerleme_karsilastirma = None
+    if sektordeki_diger_hisseler:
+        degerleme_karsilastirma = sektore_gore_degerleme(temel, sektordeki_diger_hisseler)
+
+    return {
+        "sembol": sembol,
+        "sirket_adi": temel.get("sirket_adi") or sembol,
+        "kapanis_fiyati": round(float(veri["Close"].iloc[-1]), 2),
+        "skor": skor,
+        "teknik_gorunum": teknik_gorunum,
+        "destek_direnc": seviyeler,
+        "firsatlar": firsatlar,
+        "relative_strength": rs,
+        "degerleme_karsilastirma": degerleme_karsilastirma,
+    }
+
+
+def _bilesen_ozeti(bilesenler):
+    """Bir alt skorun bileşenlerini 'isim: ham_deger' satırlarına çevirir (prompt için)."""
+    return "\n".join(f"  - {isim}: {ham}" for isim, ham, _puan, _agirlik in bilesenler)
+
+
+def _prompt_olustur(veri_paketi):
+    skor = veri_paketi["skor"]
+    teknik_gorunum = veri_paketi["teknik_gorunum"]
+    seviyeler = veri_paketi["destek_direnc"]
+    firsatlar = veri_paketi["firsatlar"]
+    rs = veri_paketi.get("relative_strength") or {}
+    degerleme = veri_paketi.get("degerleme_karsilastirma")
+
+    direnc_metni = ", ".join(
+        f"{d['seviye']} TL (güç {d['guc']}/5)" for d in seviyeler["direncler"]
+    ) or "tespit edilemedi"
+    destek_metni = ", ".join(
+        f"{d['seviye']} TL (güç {d['guc']}/5)" for d in seviyeler["destekler"]
+    ) or "tespit edilemedi"
+    firsat_metni = ", ".join(firsatlar) if firsatlar else "belirgin bir fırsat sinyali yok"
+
+    degerleme_metni = "Sektör kıyaslaması yapılamadı (veri yok)"
+    if degerleme:
+        parcalar = []
+        for anahtar, baslik in [("fk", "F/K"), ("pd_dd", "PD/DD"), ("fd_favok", "FD/FAVÖK")]:
+            d = degerleme.get(anahtar)
+            if d:
+                parcalar.append(
+                    f"{baslik}: şirket {d['sirket_degeri']}, sektör ort. "
+                    f"{d['sektor_ortalamasi']} ({d['yorum']})"
+                )
+        degerleme_metni = "; ".join(parcalar) if parcalar else degerleme_metni
 
     return (
-        "Aşağıda bir hisse senedi için kural tabanlı (teknik + temel) bir "
-        "analiz motorunun ürettiği bulgular var. Bunları, bir yatırımcının "
-        "kolayca anlayacağı şekilde 3-5 cümlelik doğal, akıcı bir Türkçe "
-        "özete çevir. Sayıları tekrarlamak yerine ne anlama geldiklerini "
-        "açıkla. Kesinlikle 'al', 'sat' gibi kesin bir yatırım tavsiyesi "
-        "verme; bunun yerine görünümü tarafsızca özetle ve sonunda kısaca "
-        "bunun yatırım tavsiyesi olmadığını hatırlat.\n\n"
-        f"Şirket: {sonuc.get('sirket_adi') or sonuc.get('sembol')} "
-        f"({sonuc.get('sembol')})\n"
-        f"Kapanış fiyatı: {sonuc.get('kapanis_fiyati')} TL\n\n"
-        f"Teknik analiz (puan: {sonuc.get('teknik_puan')}):\n{teknik_satirlar}\n\n"
-        f"Temel analiz (puan: {sonuc.get('temel_puan')}):\n{temel_satirlar}\n\n"
-        f"Birleşik değerlendirme: {sonuc.get('birlesik_genel')} "
-        f"(toplam puan: {sonuc.get('birlesik_puan')})"
+        "Aşağıda bir BIST hissesi için birden fazla hesaplama motorunun "
+        "(hisse skoru, teknik sinyal merkezi, destek/direnç, sektöre göre "
+        "değerleme) ürettiği RAKAMSAL bulgular var. Bunları bir yatırımcının "
+        "kolayca anlayacağı şekilde 5-7 cümlelik doğal, akıcı bir Türkçe "
+        "özete çevir. Şu başlıkları kısaca kapsa: genel görünüm, teknik "
+        "durum, momentum, hacim, temel görünüm, değerleme, risk. Sayıları "
+        "olduğu gibi tekrarlama, ne anlama geldiklerini açıkla. HİÇBİR "
+        "rakamı kendin üretme veya tahmin etme — sadece sana verilenleri "
+        "yorumla. Kesinlikle 'al', 'sat' gibi kesin bir yatırım tavsiyesi "
+        "verme; görünümü tarafsızca özetle ve sonunda kısaca bunun yatırım "
+        "tavsiyesi olmadığını hatırlat.\n\n"
+        f"Şirket: {veri_paketi['sirket_adi']} ({veri_paketi['sembol']})\n"
+        f"Kapanış fiyatı: {veri_paketi['kapanis_fiyati']} TL\n\n"
+        f"GENEL SKOR: {skor['genel']}/100\n"
+        f"  Trend: {skor['trend']['puan']}/100\n{_bilesen_ozeti(skor['trend']['bilesenler'])}\n"
+        f"  Momentum: {skor['momentum']['puan']}/100\n{_bilesen_ozeti(skor['momentum']['bilesenler'])}\n"
+        f"  Teknik: {skor['teknik']['puan']}/100\n{_bilesen_ozeti(skor['teknik']['bilesenler'])}\n"
+        f"  Hacim: {skor['hacim']['puan']}/100\n{_bilesen_ozeti(skor['hacim']['bilesenler'])}\n"
+        f"  Temel: {skor['temel']['puan']}/100\n{_bilesen_ozeti(skor['temel']['bilesenler'])}\n"
+        f"  Değerleme: {skor['degerleme']['puan']}/100\n{_bilesen_ozeti(skor['degerleme']['bilesenler'])}\n\n"
+        f"TEKNİK SİNYAL MERKEZİ: {teknik_gorunum['etiket']} (puan: {teknik_gorunum['puan']})\n\n"
+        f"DESTEK SEVİYELERİ: {destek_metni}\n"
+        f"DİRENÇ SEVİYELERİ: {direnc_metni}\n\n"
+        f"SEKTÖRE GÖRE DEĞERLEME: {degerleme_metni}\n\n"
+        f"RELATIVE STRENGTH (BIST 100'e göre, 1 hafta): {rs.get('1h', 'veri yok')}\n\n"
+        f"FIRSAT SİNYALLERİ: {firsat_metni}"
     )
 
 
-def hisse_yorumu_uret(sonuc, api_key):
+def hisse_yorumu_uret(sembol, api_key, sektordeki_diger_hisseler=None):
     """
-    `sonuc`: test.py -> tam_analiz_et() çıktısı (dict).
+    `sembol`: analiz edilecek hisse (örn. "THYAO.IS").
     `api_key`: Ayarlar ekranından girilen Gemini API anahtarı.
+    `sektordeki_diger_hisseler`: (opsiyonel) sektöre göre değerleme için.
 
     Başarılıysa üretilen yorum metnini (str) döner.
     Hata durumunda AIYorumHatasi fırlatır (çağıran taraf mesajı UI'da gösterir).
@@ -64,13 +149,15 @@ def hisse_yorumu_uret(sonuc, api_key):
             "bir anahtar ekleyebilirsin (aistudio.google.com/app/apikey)."
         )
 
+    veri_paketi = zengin_analiz_verisi_olustur(sembol, sektordeki_diger_hisseler)
+
     govde = {
         "contents": [
-            {"parts": [{"text": _prompt_olustur(sonuc)}]}
+            {"parts": [{"text": _prompt_olustur(veri_paketi)}]}
         ],
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 400,
+            "maxOutputTokens": 500,
         },
     }
 
@@ -109,3 +196,13 @@ def hisse_yorumu_uret(sonuc, api_key):
         return metin
     except (KeyError, IndexError) as e:
         raise AIYorumHatasi(f"Gemini yanıtı beklenmeyen formatta: {e}") from e
+
+
+if __name__ == "__main__":
+    import sys
+    api_key = sys.argv[1] if len(sys.argv) > 1 else None
+    if not api_key:
+        print("Kullanım: python ai_yorum.py <GEMINI_API_KEY>")
+    else:
+        yorum = hisse_yorumu_uret("THYAO.IS", api_key)
+        print(yorum)
