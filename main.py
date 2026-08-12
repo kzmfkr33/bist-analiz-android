@@ -17,8 +17,10 @@ from kivy.uix.button import Button
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
+from kivy.uix.progressbar import ProgressBar
 from kivy.uix.screenmanager import Screen, ScreenManager, SlideTransition
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
@@ -38,7 +40,10 @@ os.makedirs(_VERI_DIZINI, exist_ok=True)
 os.chdir(_VERI_DIZINI)
 
 from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir  # noqa: E402
-from tarayici import tum_hisseleri_tara                                # noqa: E402
+from tarayici import (                                                 # noqa: E402
+    tum_hisseleri_tara, en_guclu_20, en_ucuz_20, en_hizli_yukselen_20,
+    hacmi_en_cok_artan_20, teknik_en_guclu_20, asiri_satilan_20, asiri_alinan_20,
+)
 import ayarlar                                                         # noqa: E402
 
 RENK_ARKAPLAN = (0.07, 0.09, 0.13, 1)
@@ -50,6 +55,16 @@ RENK_METIN = (0.92, 0.94, 0.96, 1)
 RENK_VURGU = (0.20, 0.55, 0.95, 1)
 
 Window.clearcolor = RENK_ARKAPLAN
+
+
+def _puana_gore_renk(puan):
+    if puan is None:
+        return RENK_NOTR
+    if puan >= 2:
+        return RENK_OLUMLU
+    if puan <= -2:
+        return RENK_OLUMSUZ
+    return RENK_NOTR
 
 
 def baslik_etiketi(metin, boyut=20):
@@ -249,6 +264,133 @@ class PiyasaEkrani(Screen):
 
 
 # ---------------------------------------------------------------------------
+# EKRAN: Hisseler (Screener + Sıralamalar) — plan madde 2, 11
+# ---------------------------------------------------------------------------
+class HisselerEkrani(Screen):
+    _SIRALAMA_SECENEKLERI = [
+        "Genel Puan", "En Ucuz (F/K)", "En Hızlı Yükselen", "Hacmi En Çok Artan",
+        "Teknik En Güçlü", "Aşırı Satılan", "Aşırı Alınan",
+    ]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        ust_satir.add_widget(baslik_etiketi("Hisseler", 20))
+        self.tara_btn = Button(text="Tara", size_hint_x=0.3, background_color=RENK_VURGU)
+        self.tara_btn.bind(on_release=self._tarama_baslat)
+        ust_satir.add_widget(self.tara_btn)
+        kok.add_widget(ust_satir)
+
+        siralama_satiri = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
+        siralama_satiri.add_widget(govde_etiketi("Sırala:"))
+        self.siralama_secici = Spinner(
+            text="Genel Puan", values=self._SIRALAMA_SECENEKLERI, size_hint_x=0.7,
+        )
+        self.siralama_secici.bind(text=self._siralama_degisti)
+        siralama_satiri.add_widget(self.siralama_secici)
+        kok.add_widget(siralama_satiri)
+
+        self.ilerleme = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(8))
+        kok.add_widget(self.ilerleme)
+
+        self.durum_etiketi = Label(
+            text="Taramak için 'Tara'ya bas (~50 hisse, temel veriler dahil — biraz sürebilir).",
+            size_hint_y=None, height=dp(40), color=RENK_NOTR,
+        )
+        self.durum_etiketi.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(6),
+                                       size_hint_y=None, padding=(0, dp(4)))
+        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
+        kaydirma.add_widget(self.sonuc_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+        self._son_tarama_sonuclari = []
+
+    def _tarama_baslat(self, *args):
+        self.tara_btn.disabled = True
+        self.ilerleme.value = 0
+        self.durum_etiketi.text = "Hisseler taranıyor..."
+        self.sonuc_kutusu.clear_widgets()
+        threading.Thread(target=self._tara, daemon=True).start()
+
+    def _ilerleme_callback(self, tamamlanan, toplam, sembol):
+        yuzde = (tamamlanan / toplam) * 100 if toplam else 0
+        Clock.schedule_once(lambda dt: self._ilerleme_guncelle(yuzde, tamamlanan, toplam, sembol))
+
+    def _ilerleme_guncelle(self, yuzde, tamamlanan, toplam, sembol):
+        self.ilerleme.value = yuzde
+        self.durum_etiketi.text = f"{tamamlanan}/{toplam} tarandı ({sembol})"
+
+    def _tara(self):
+        try:
+            sonuclar = tum_hisseleri_tara(
+                temel_dahil_et=True, max_paralel_islem=8, ilerleme_callback=self._ilerleme_callback,
+            )
+            Clock.schedule_once(lambda dt: self._tarama_bitti(sonuclar))
+        except Exception as hata:
+            Clock.schedule_once(lambda dt: uyari_goster("Tarama başarısız", str(hata)))
+            Clock.schedule_once(lambda dt: setattr(self.tara_btn, "disabled", False))
+
+    def _tarama_bitti(self, sonuclar):
+        self.tara_btn.disabled = False
+        self._son_tarama_sonuclari = sonuclar
+        self.durum_etiketi.text = f"{len(sonuclar)} hisse tarandı."
+        self._listeyi_goster()
+
+    def _siralama_degisti(self, *args):
+        if self._son_tarama_sonuclari:
+            self._listeyi_goster()
+
+    def _siralanmis_listeyi_getir(self):
+        s = self._son_tarama_sonuclari
+        secim = self.siralama_secici.text
+        eslesme = {
+            "Genel Puan": en_guclu_20,
+            "En Ucuz (F/K)": en_ucuz_20,
+            "En Hızlı Yükselen": en_hizli_yukselen_20,
+            "Hacmi En Çok Artan": hacmi_en_cok_artan_20,
+            "Teknik En Güçlü": teknik_en_guclu_20,
+            "Aşırı Satılan": asiri_satilan_20,
+            "Aşırı Alınan": asiri_alinan_20,
+        }
+        fonksiyon = eslesme.get(secim, en_guclu_20)
+        return fonksiyon(s)
+
+    def _listeyi_goster(self):
+        self.sonuc_kutusu.clear_widgets()
+        liste = self._siralanmis_listeyi_getir()
+
+        if not liste:
+            self.sonuc_kutusu.add_widget(govde_etiketi("Sonuç yok."))
+            return
+
+        for s in liste:
+            kart = KartKutu()
+            fk = s.get("fk_orani")
+            fk_metni = f"F/K {fk:.1f}" if fk is not None else "F/K -"
+            degisim = s.get("degisim_yuzde_1g")
+            degisim_metni = f"{'+' if (degisim or 0) >= 0 else ''}{degisim:.2f}%" if degisim is not None else "-"
+            rsi = s.get("gostergeler", {}).get("RSI")
+            rsi_metni = f"{rsi:.1f}" if rsi is not None else "-"
+            renk = _puana_gore_renk(s.get("puan"))
+
+            kart.add_widget(baslik_etiketi(
+                f"{s['sembol']}  ·  {s['kapanis_fiyati']:.2f} TL  ({degisim_metni})", 15
+            ))
+            kart.add_widget(govde_etiketi(
+                f"Puan: {s.get('puan')}   RSI: {rsi_metni}   {fk_metni}", renk=renk,
+            ))
+            kart.add_widget(govde_etiketi(s.get("genel_degerlendirme", ""), renk=renk))
+            self.sonuc_kutusu.add_widget(kart)
+
+
+# ---------------------------------------------------------------------------
 # EKRAN: Ayarlar
 # ---------------------------------------------------------------------------
 class AyarlarEkrani(Screen):
@@ -309,9 +451,8 @@ class AltMenu(BoxLayout):
     def __init__(self, sm, **kwargs):
         super().__init__(orientation="horizontal", size_hint_y=None, height=dp(56), **kwargs)
         self.sm = sm
-        # Not: sıradaki adımlarda buraya Hisseler, Watchlist, Strateji gibi
-        # sekmeler eklenecek — şimdilik iskelet + Piyasa ekranı hazır.
-        sekmeler = [("Piyasa", "piyasa"), ("Ayarlar", "ayarlar")]
+        # Not: sıradaki adımlarda buraya Watchlist, Sektör, Strateji sekmeleri eklenecek.
+        sekmeler = [("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Ayarlar", "ayarlar")]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
                          color=RENK_METIN)
@@ -328,22 +469,10 @@ class AnaLayout(BoxLayout):
         super().__init__(orientation="vertical", **kwargs)
         sm = ScreenManager()
         sm.add_widget(PiyasaEkrani(name="piyasa"))
+        sm.add_widget(HisselerEkrani(name="hisseler"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
                             color=RENK_METIN, size_hint_y=None, height=dp(50))
 
-        self.add_widget(ust_baslik)
-        self.add_widget(sm)
-        self.add_widget(AltMenu(sm))
-
-
-class BistAnalizApp(App):
-    title = "BIST Analiz Merkezi"
-
-    def build(self):
-        return AnaLayout()
-
-
-if __name__ == "__main__":
-    BistAnalizApp().run()
+        self.add_widget
