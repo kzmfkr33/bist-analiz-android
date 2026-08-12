@@ -1,10 +1,9 @@
 """
 BIST Analiz Merkezi - Android (Kivy) sürümü.
 
-Orijinal Streamlit arayüzü yerine, aynı analiz/tarama/portföy motorunu
-(gostergeler.py, sinyal_motoru.py, temel_analiz.py, tarayici.py, portfoy.py...)
-kullanan native bir Kivy arayüzü. Ağ çağrıları (fiyat verisi çekme, tarama)
-UI'yi kilitlememesi için arka plan thread'lerinde çalışır.
+Ağ çağrıları (fiyat verisi çekme, tarama) UI'yi kilitlememesi için
+arka plan thread'lerinde çalışır, sonuçlar Clock.schedule_once ile
+ana thread'e (UI thread) geri taşınır.
 """
 import os
 import threading
@@ -18,18 +17,16 @@ from kivy.uix.button import Button
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
-from kivy.uix.progressbar import ProgressBar
 from kivy.uix.screenmanager import Screen, ScreenManager, SlideTransition
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
 # ---------------------------------------------------------------------------
-# Uygulama verilerinin (JSON/CSV/log dosyaları) yazılacağı klasörü,
-# içe aktarmalardan ÖNCE ayarlıyoruz — portfoy.py, tarama_kriterleri.py,
-# log_ayarlari.py gibi modüller dosyaları geçerli çalışma dizinine göre
-# (göreli yol) açıyor.
+# Uygulama verilerinin (JSON/log dosyaları) yazılacağı klasörü, içe
+# aktarmalardan ÖNCE ayarlıyoruz — ayarlar.py, log_ayarlari.py, alarm_sistemi.py,
+# watchlist.py, strateji_olusturucu.py gibi modüller dosyaları geçerli
+# çalışma dizinine göre (göreli yol) açıyor.
 # ---------------------------------------------------------------------------
 if platform == "android":
     from android.storage import app_storage_path
@@ -40,13 +37,9 @@ else:
 os.makedirs(_VERI_DIZINI, exist_ok=True)
 os.chdir(_VERI_DIZINI)
 
-from test import tam_analiz_et                                  # noqa: E402
-from tarayici import tum_bist_kodlarini_getir, tum_hisseleri_tara, YEDEK_LISTE  # noqa: E402
-from tarama_kriterleri import kriterlere_gore_filtrele          # noqa: E402
-from risk_yonetimi import atr_ile_stop_onerisi, pozisyon_buyuklugu_hesapla  # noqa: E402
-from portfoy import pozisyon_ekle, portfoy_ozeti                # noqa: E402
-import ayarlar                                                  # noqa: E402
-import ai_yorum                                                 # noqa: E402
+from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir  # noqa: E402
+from tarayici import tum_hisseleri_tara                                # noqa: E402
+import ayarlar                                                         # noqa: E402
 
 RENK_ARKAPLAN = (0.07, 0.09, 0.13, 1)
 RENK_KART = (0.12, 0.15, 0.20, 1)
@@ -57,16 +50,6 @@ RENK_METIN = (0.92, 0.94, 0.96, 1)
 RENK_VURGU = (0.20, 0.55, 0.95, 1)
 
 Window.clearcolor = RENK_ARKAPLAN
-
-
-def _puana_gore_renk(puan):
-    if puan is None:
-        return RENK_NOTR
-    if puan >= 2:
-        return RENK_OLUMLU
-    if puan <= -2:
-        return RENK_OLUMSUZ
-    return RENK_NOTR
 
 
 def baslik_etiketi(metin, boyut=20):
@@ -115,329 +98,154 @@ class KartKutu(BoxLayout):
 
 
 # ---------------------------------------------------------------------------
-# EKRAN: Hisse Analizi
+# EKRAN: Piyasa (Ana Ekran) — plan madde 1
 # ---------------------------------------------------------------------------
-class AnalizEkrani(Screen):
+class PiyasaEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
 
-        arama_satiri = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        self.sembol_girisi = TextInput(
-            hint_text="Örn: THYAO.IS", multiline=False, size_hint_x=0.7,
-            font_size=dp(16),
-        )
-        buton = Button(text="Analiz Et", size_hint_x=0.3, background_color=RENK_VURGU)
-        buton.bind(on_release=self._analiz_baslat)
-        arama_satiri.add_widget(self.sembol_girisi)
-        arama_satiri.add_widget(buton)
-        kok.add_widget(arama_satiri)
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        ust_satir.add_widget(baslik_etiketi("Piyasa", 20))
+        self.yenile_btn = Button(text="Yenile", size_hint_x=0.35, background_color=RENK_VURGU)
+        self.yenile_btn.bind(on_release=self._yenile)
+        ust_satir.add_widget(self.yenile_btn)
+        kok.add_widget(ust_satir)
 
-        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(24), color=RENK_METIN)
+        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(22), color=RENK_NOTR)
         kok.add_widget(self.durum_etiketi)
 
         kaydirma = ScrollView()
-        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(10),
-                                       size_hint_y=None, padding=(0, dp(4)))
-        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
-        kaydirma.add_widget(self.sonuc_kutusu)
+        self.icerik_kutusu = BoxLayout(orientation="vertical", spacing=dp(10),
+                                        size_hint_y=None, padding=(0, dp(4)))
+        self.icerik_kutusu.bind(minimum_height=self.icerik_kutusu.setter("height"))
+        kaydirma.add_widget(self.icerik_kutusu)
         kok.add_widget(kaydirma)
 
         self.add_widget(kok)
+        self._ilk_yukleme_yapildi = False
 
-    def _analiz_baslat(self, *args):
-        sembol = self.sembol_girisi.text.strip().upper()
-        if not sembol:
-            uyari_goster("Eksik bilgi", "Lütfen bir hisse kodu gir (örn. THYAO.IS).")
-            return
-        if not sembol.endswith(".IS") and "." not in sembol:
-            sembol += ".IS"
+    def on_enter(self, *args):
+        if not self._ilk_yukleme_yapildi:
+            self._ilk_yukleme_yapildi = True
+            self._yenile()
 
-        self.durum_etiketi.text = f"{sembol} analiz ediliyor..."
-        self.sonuc_kutusu.clear_widgets()
-        threading.Thread(target=self._analiz_yap, args=(sembol,), daemon=True).start()
+    def _yenile(self, *args):
+        self.yenile_btn.disabled = True
+        self.durum_etiketi.text = "Piyasa verisi yükleniyor..."
+        self.icerik_kutusu.clear_widgets()
+        threading.Thread(target=self._veriyi_getir, daemon=True).start()
 
-    def _analiz_yap(self, sembol):
+    def _veriyi_getir(self):
         try:
-            sonuc = tam_analiz_et(sembol)
-            Clock.schedule_once(lambda dt: self._sonucu_goster(sonuc))
+            endeksler = endeks_verisi_getir()
+            emtialar = doviz_altin_emtia_getir()
+            Clock.schedule_once(lambda dt: self._ust_kartlari_goster(endeksler, emtialar))
         except Exception as hata:
-            Clock.schedule_once(lambda dt: self._hata_goster(str(hata)))
+            Clock.schedule_once(lambda dt: self._hata_goster(f"Endeks/döviz verisi alınamadı: {hata}"))
+            return
+
+        self._nabiz_taramasi_yap()
+
+    def _ust_kartlari_goster(self, endeksler, emtialar):
+        self.durum_etiketi.text = "Piyasa nabzı taranıyor (BIST evreni)..."
+
+        endeks_kart = KartKutu()
+        endeks_kart.add_widget(baslik_etiketi("Endeksler", 16))
+        izgara = GridLayout(cols=2, size_hint_y=None, spacing=dp(6))
+        izgara.bind(minimum_height=izgara.setter("height"))
+        for isim, df in endeksler.items():
+            metin, renk = self._degisim_metni(df)
+            izgara.add_widget(govde_etiketi(f"{isim}\n{metin}", renk=renk))
+        endeks_kart.add_widget(izgara)
+        self.icerik_kutusu.add_widget(endeks_kart)
+
+        emtia_kart = KartKutu()
+        emtia_kart.add_widget(baslik_etiketi("Döviz / Emtia", 16))
+        izgara2 = GridLayout(cols=2, size_hint_y=None, spacing=dp(6))
+        izgara2.bind(minimum_height=izgara2.setter("height"))
+        for isim, df in emtialar.items():
+            metin, renk = self._degisim_metni(df)
+            izgara2.add_widget(govde_etiketi(f"{isim}\n{metin}", renk=renk))
+        emtia_kart.add_widget(izgara2)
+        self.icerik_kutusu.add_widget(emtia_kart)
+
+    def _degisim_metni(self, df):
+        if df is None or len(df) < 2:
+            return "veri yok", RENK_NOTR
+        son = float(df["Close"].iloc[-1])
+        onceki = float(df["Close"].iloc[-2])
+        degisim = 100 * (son - onceki) / onceki
+        isaret = "+" if degisim >= 0 else ""
+        renk = RENK_OLUMLU if degisim >= 0 else RENK_OLUMSUZ
+        return f"{son:.2f}  ({isaret}{degisim:.2f}%)", renk
+
+    def _nabiz_taramasi_yap(self):
+        try:
+            sonuclar = tum_hisseleri_tara(temel_dahil_et=False, max_paralel_islem=10)
+            Clock.schedule_once(lambda dt: self._nabzi_goster(sonuclar))
+        except Exception as hata:
+            Clock.schedule_once(lambda dt: self._hata_goster(f"Piyasa nabzı taranamadı: {hata}"))
+
+    def _nabzi_goster(self, sonuclar):
+        self.yenile_btn.disabled = False
+        self.durum_etiketi.text = f"{len(sonuclar)} hisse tarandı."
+
+        yukselen = [s for s in sonuclar if (s.get("degisim_yuzde_1g") or 0) > 0]
+        dusen = [s for s in sonuclar if (s.get("degisim_yuzde_1g") or 0) < 0]
+        yatay = [s for s in sonuclar if (s.get("degisim_yuzde_1g") or 0) == 0]
+
+        sayim_kart = KartKutu()
+        sayim_kart.add_widget(baslik_etiketi("Piyasa Nabzı", 16))
+        sayim_kart.add_widget(govde_etiketi(
+            f"Yükselen: {len(yukselen)}   Düşen: {len(dusen)}   Yatay: {len(yatay)}"
+        ))
+        yeni_zirve = [s for s in sonuclar if s.get("periyot_zirvesi_mi")]
+        yeni_dip = [s for s in sonuclar if s.get("periyot_dibi_mi")]
+        sayim_kart.add_widget(govde_etiketi(
+            f"Yeni zirve yapan: {len(yeni_zirve)}   Yeni dip yapan: {len(yeni_dip)}"
+        ))
+        self.icerik_kutusu.add_widget(sayim_kart)
+
+        en_cok_yukselen = sorted(yukselen, key=lambda s: s["degisim_yuzde_1g"], reverse=True)[:5]
+        en_cok_dusen = sorted(dusen, key=lambda s: s["degisim_yuzde_1g"])[:5]
+        en_yuksek_hacimli = sorted(
+            [s for s in sonuclar if s.get("gostergeler", {}).get("RVOL") is not None],
+            key=lambda s: s["gostergeler"]["RVOL"], reverse=True
+        )[:5]
+
+        self.icerik_kutusu.add_widget(
+            self._liste_karti("En Çok Yükselenler", en_cok_yukselen, "degisim_yuzde_1g", "%")
+        )
+        self.icerik_kutusu.add_widget(
+            self._liste_karti("En Çok Düşenler", en_cok_dusen, "degisim_yuzde_1g", "%")
+        )
+        self.icerik_kutusu.add_widget(
+            self._liste_karti("Hacmi En Çok Artanlar (RVOL)", en_yuksek_hacimli, None, "x", ozel_alan="RVOL")
+        )
+
+    def _liste_karti(self, baslik, hisseler, alan, birim, ozel_alan=None):
+        kart = KartKutu()
+        kart.add_widget(baslik_etiketi(baslik, 16))
+        if not hisseler:
+            kart.add_widget(govde_etiketi("Veri yok."))
+            return kart
+        for s in hisseler:
+            if ozel_alan:
+                deger = s.get("gostergeler", {}).get(ozel_alan)
+                metin = f"{s['sembol']}: {deger:.2f}{birim}" if deger is not None else f"{s['sembol']}: -"
+            else:
+                deger = s.get(alan)
+                isaret = "+" if (deger or 0) >= 0 else ""
+                metin = f"{s['sembol']}: {isaret}{deger:.2f}{birim}" if deger is not None else f"{s['sembol']}: -"
+            renk = RENK_OLUMLU if (deger or 0) >= 0 else RENK_OLUMSUZ
+            kart.add_widget(govde_etiketi(metin, renk=renk))
+        return kart
 
     def _hata_goster(self, mesaj):
+        self.yenile_btn.disabled = False
         self.durum_etiketi.text = ""
-        uyari_goster("Analiz başarısız", f"Veri alınamadı: {mesaj}\n\nİnternet bağlantını kontrol et.")
-
-    def _sonucu_goster(self, sonuc):
-        self.durum_etiketi.text = ""
-        self.sonuc_kutusu.clear_widgets()
-
-        baslik_kart = KartKutu()
-        ad = sonuc.get("sirket_adi") or sonuc["sembol"]
-        baslik_kart.add_widget(baslik_etiketi(f"{ad} ({sonuc['sembol']})"))
-        baslik_kart.add_widget(govde_etiketi(f"Kapanış: {sonuc['kapanis_fiyati']:.2f} TL"))
-        renk = _puana_gore_renk(sonuc["birlesik_puan"])
-        baslik_kart.add_widget(govde_etiketi(sonuc["birlesik_genel"], renk=renk))
-        self.sonuc_kutusu.add_widget(baslik_kart)
-
-        teknik_kart = KartKutu()
-        teknik_kart.add_widget(baslik_etiketi(f"Teknik Analiz (puan: {sonuc['teknik_puan']})", 16))
-        for d in sonuc["teknik_detaylar"]:
-            teknik_kart.add_widget(govde_etiketi(f"• {d}"))
-        self.sonuc_kutusu.add_widget(teknik_kart)
-
-        temel_kart = KartKutu()
-        temel_kart.add_widget(baslik_etiketi(f"Temel Analiz (puan: {sonuc['temel_puan']})", 16))
-        for d in sonuc["temel_detaylar"]:
-            temel_kart.add_widget(govde_etiketi(f"• {d}"))
-        self.sonuc_kutusu.add_widget(temel_kart)
-
-        risk_kart = KartKutu()
-        risk_kart.add_widget(baslik_etiketi("Stop-Loss Önerisi (ATR bazlı)", 16))
-        ekle_btn = Button(text="Hesapla", size_hint_y=None, height=dp(40),
-                           background_color=RENK_VURGU)
-        risk_kutusu = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(4))
-        risk_kutusu.bind(minimum_height=risk_kutusu.setter("height"))
-
-        def _risk_hesapla(*_a, sembol=sonuc["sembol"], kutu=risk_kutusu):
-            kutu.clear_widgets()
-            kutu.add_widget(govde_etiketi("Hesaplanıyor..."))
-
-            def _isle():
-                try:
-                    r = atr_ile_stop_onerisi(sembol)
-                    metin = (
-                        f"Güncel fiyat: {r['guncel_fiyat']} TL\n"
-                        f"Önerilen giriş: {r['onerilen_giris']} TL\n"
-                        f"Önerilen stop: {r['onerilen_stop']} TL\n"
-                        f"Stop mesafesi: %{r['stop_mesafesi_yuzde']}"
-                    )
-                    Clock.schedule_once(lambda dt: (kutu.clear_widgets(), kutu.add_widget(govde_etiketi(metin))))
-                except Exception as e:
-                    Clock.schedule_once(lambda dt: (kutu.clear_widgets(), kutu.add_widget(govde_etiketi(f"Hata: {e}", renk=RENK_OLUMSUZ))))
-
-            threading.Thread(target=_isle, daemon=True).start()
-
-        ekle_btn.bind(on_release=_risk_hesapla)
-        risk_kart.add_widget(ekle_btn)
-        risk_kart.add_widget(risk_kutusu)
-        self.sonuc_kutusu.add_widget(risk_kart)
-
-        ai_kart = KartKutu()
-        ai_kart.add_widget(baslik_etiketi("AI Yorum (Gemini)", 16))
-        ai_btn = Button(text="Yorum Üret", size_hint_y=None, height=dp(40),
-                         background_color=RENK_VURGU)
-        ai_kutusu = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(4))
-        ai_kutusu.bind(minimum_height=ai_kutusu.setter("height"))
-
-        def _ai_yorum_uret(*_a, sonuc=sonuc, kutu=ai_kutusu):
-            kutu.clear_widgets()
-            kutu.add_widget(govde_etiketi("Yorum üretiliyor..."))
-
-            def _isle():
-                try:
-                    api_key = ayarlar.ayarlari_oku()["gemini_api_key"]
-                    metin = ai_yorum.hisse_yorumu_uret(sonuc, api_key)
-                    Clock.schedule_once(
-                        lambda dt: (kutu.clear_widgets(), kutu.add_widget(govde_etiketi(metin)))
-                    )
-                except ai_yorum.AIYorumHatasi as e:
-                    Clock.schedule_once(
-                        lambda dt: (kutu.clear_widgets(),
-                                     kutu.add_widget(govde_etiketi(str(e), renk=RENK_OLUMSUZ)))
-                    )
-                except Exception as e:
-                    Clock.schedule_once(
-                        lambda dt: (kutu.clear_widgets(),
-                                     kutu.add_widget(govde_etiketi(f"Beklenmeyen hata: {e}", renk=RENK_OLUMSUZ)))
-                    )
-
-            threading.Thread(target=_isle, daemon=True).start()
-
-        ai_btn.bind(on_release=_ai_yorum_uret)
-        ai_kart.add_widget(ai_btn)
-        ai_kart.add_widget(ai_kutusu)
-        self.sonuc_kutusu.add_widget(ai_kart)
-
-
-# ---------------------------------------------------------------------------
-# EKRAN: Tarama
-# ---------------------------------------------------------------------------
-class TaramaEkrani(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
-
-        kok.add_widget(govde_etiketi(
-            "Not: Tam BIST listesi Wikipedia'dan indirilemezse, bilinen "
-            f"{len(YEDEK_LISTE)} likit hisseden oluşan yedek liste kullanılır."
-        ))
-
-        buton_satiri = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
-        self.baslat_btn = Button(text="Taramayı Başlat", background_color=RENK_VURGU)
-        self.baslat_btn.bind(on_release=self._tarama_baslat)
-        buton_satiri.add_widget(self.baslat_btn)
-        kok.add_widget(buton_satiri)
-
-        self.ilerleme = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(10))
-        kok.add_widget(self.ilerleme)
-        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(24), color=RENK_METIN)
-        kok.add_widget(self.durum_etiketi)
-
-        kaydirma = ScrollView()
-        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(6),
-                                       size_hint_y=None, padding=(0, dp(4)))
-        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
-        kaydirma.add_widget(self.sonuc_kutusu)
-        kok.add_widget(kaydirma)
-
-        self.add_widget(kok)
-
-    def _tarama_baslat(self, *args):
-        self.baslat_btn.disabled = True
-        self.sonuc_kutusu.clear_widgets()
-        self.ilerleme.value = 0
-        self.durum_etiketi.text = "Hisse listesi hazırlanıyor..."
-        threading.Thread(target=self._tara, daemon=True).start()
-
-    def _ilerleme_callback(self, tamamlanan, toplam, sembol):
-        yuzde = (tamamlanan / toplam) * 100 if toplam else 0
-        Clock.schedule_once(lambda dt: self._ilerleme_guncelle(yuzde, tamamlanan, toplam, sembol))
-
-    def _ilerleme_guncelle(self, yuzde, tamamlanan, toplam, sembol):
-        self.ilerleme.value = yuzde
-        self.durum_etiketi.text = f"{tamamlanan}/{toplam} tarandı ({sembol})"
-
-    def _tara(self):
-        try:
-            liste = tum_bist_kodlarini_getir()
-            sonuclar = tum_hisseleri_tara(liste, max_paralel_islem=8,
-                                           ilerleme_callback=self._ilerleme_callback)
-            olumlu_kriter = [{"alan": "puan", "operator": ">=", "deger": 2}]
-            filtrelenmis = kriterlere_gore_filtrele(sonuclar, olumlu_kriter)
-            filtrelenmis.sort(key=lambda x: x["puan"], reverse=True)
-            Clock.schedule_once(lambda dt: self._sonuclari_goster(filtrelenmis, len(sonuclar)))
-        except Exception as hata:
-            Clock.schedule_once(lambda dt: uyari_goster("Tarama başarısız", str(hata)))
-            Clock.schedule_once(lambda dt: setattr(self.baslat_btn, "disabled", False))
-
-    def _sonuclari_goster(self, filtrelenmis, toplam_taranan):
-        self.baslat_btn.disabled = False
-        self.durum_etiketi.text = f"{toplam_taranan} hisse tarandı, {len(filtrelenmis)} tanesi olumlu (puan >= 2)."
-        self.sonuc_kutusu.clear_widgets()
-
-        if not filtrelenmis:
-            self.sonuc_kutusu.add_widget(govde_etiketi("Kritere uyan hisse bulunamadı."))
-            return
-
-        for s in filtrelenmis:
-            kart = KartKutu()
-            renk = _puana_gore_renk(s["puan"])
-            kart.add_widget(baslik_etiketi(f"{s['sembol']}  ·  puan {s['puan']}  ·  {s['kapanis_fiyati']:.2f} TL", 15))
-            kart.add_widget(govde_etiketi(s["genel_degerlendirme"], renk=renk))
-            self.sonuc_kutusu.add_widget(kart)
-
-
-# ---------------------------------------------------------------------------
-# EKRAN: Portföy
-# ---------------------------------------------------------------------------
-class PortfoyEkrani(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
-
-        ekle_kart = KartKutu()
-        ekle_kart.add_widget(baslik_etiketi("Pozisyon Ekle", 16))
-        satir1 = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
-        self.sembol_girisi = TextInput(hint_text="THYAO.IS", multiline=False)
-        self.adet_girisi = TextInput(hint_text="Adet", multiline=False, input_filter="int")
-        self.maliyet_girisi = TextInput(hint_text="Maliyet (TL)", multiline=False, input_filter="float")
-        satir1.add_widget(self.sembol_girisi)
-        satir1.add_widget(self.adet_girisi)
-        satir1.add_widget(self.maliyet_girisi)
-        ekle_kart.add_widget(satir1)
-        ekle_btn = Button(text="Portföye Ekle", size_hint_y=None, height=dp(42),
-                           background_color=RENK_VURGU)
-        ekle_btn.bind(on_release=self._pozisyon_ekle)
-        ekle_kart.add_widget(ekle_btn)
-        kok.add_widget(ekle_kart)
-
-        yenile_btn = Button(text="Portföy Özetini Yenile", size_hint_y=None, height=dp(42),
-                             background_color=RENK_VURGU)
-        yenile_btn.bind(on_release=self._ozet_yenile)
-        kok.add_widget(yenile_btn)
-
-        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(24), color=RENK_METIN)
-        kok.add_widget(self.durum_etiketi)
-
-        kaydirma = ScrollView()
-        self.ozet_kutusu = BoxLayout(orientation="vertical", spacing=dp(8),
-                                      size_hint_y=None, padding=(0, dp(4)))
-        self.ozet_kutusu.bind(minimum_height=self.ozet_kutusu.setter("height"))
-        kaydirma.add_widget(self.ozet_kutusu)
-        kok.add_widget(kaydirma)
-
-        self.add_widget(kok)
-
-    def _pozisyon_ekle(self, *args):
-        sembol = self.sembol_girisi.text.strip().upper()
-        adet = self.adet_girisi.text.strip()
-        maliyet = self.maliyet_girisi.text.strip()
-        if not (sembol and adet and maliyet):
-            uyari_goster("Eksik bilgi", "Sembol, adet ve maliyet alanlarını doldur.")
-            return
-        if not sembol.endswith(".IS") and "." not in sembol:
-            sembol += ".IS"
-        try:
-            pozisyon_ekle(sembol, int(adet), float(maliyet))
-            self.sembol_girisi.text = ""
-            self.adet_girisi.text = ""
-            self.maliyet_girisi.text = ""
-            uyari_goster("Eklendi", f"{sembol} portföye eklendi.")
-        except Exception as hata:
-            uyari_goster("Hata", str(hata))
-
-    def _ozet_yenile(self, *args):
-        self.durum_etiketi.text = "Güncel fiyatlar alınıyor..."
-        self.ozet_kutusu.clear_widgets()
-        threading.Thread(target=self._ozet_getir, daemon=True).start()
-
-    def _ozet_getir(self):
-        try:
-            ozet = portfoy_ozeti()
-            Clock.schedule_once(lambda dt: self._ozeti_goster(ozet))
-        except Exception as hata:
-            Clock.schedule_once(lambda dt: uyari_goster("Hata", str(hata)))
-            Clock.schedule_once(lambda dt: setattr(self.durum_etiketi, "text", ""))
-
-    def _ozeti_goster(self, ozet):
-        self.durum_etiketi.text = ""
-        self.ozet_kutusu.clear_widgets()
-
-        if ozet.get("mesaj"):
-            self.ozet_kutusu.add_widget(govde_etiketi(ozet["mesaj"]))
-            return
-
-        genel_kart = KartKutu()
-        renk = RENK_OLUMLU if ozet["toplam_kar_zarar"] >= 0 else RENK_OLUMSUZ
-        genel_kart.add_widget(baslik_etiketi("Portföy Özeti", 16))
-        genel_kart.add_widget(govde_etiketi(f"Toplam değer: {ozet['toplam_deger']:.2f} TL"))
-        genel_kart.add_widget(govde_etiketi(
-            f"Toplam K/Z: {ozet['toplam_kar_zarar']:.2f} TL (%{ozet['toplam_kar_zarar_yuzde']:.1f})",
-            renk=renk,
-        ))
-        self.ozet_kutusu.add_widget(genel_kart)
-
-        for p in ozet["pozisyonlar"]:
-            kart = KartKutu()
-            kz_renk = RENK_NOTR
-            if p["kar_zarar"] is not None:
-                kz_renk = RENK_OLUMLU if p["kar_zarar"] >= 0 else RENK_OLUMSUZ
-            kart.add_widget(baslik_etiketi(f"{p['sembol']} · {p['adet']} adet", 15))
-            kart.add_widget(govde_etiketi(f"Ort. maliyet: {p['ortalama_maliyet']} TL  ·  Güncel: {p['guncel_fiyat']} TL"))
-            if p["kar_zarar"] is not None:
-                kart.add_widget(govde_etiketi(f"K/Z: {p['kar_zarar']} TL (%{p['kar_zarar_yuzde']})", renk=kz_renk))
-            self.ozet_kutusu.add_widget(kart)
+        uyari_goster("Veri alınamadı", mesaj)
 
 
 # ---------------------------------------------------------------------------
@@ -501,10 +309,9 @@ class AltMenu(BoxLayout):
     def __init__(self, sm, **kwargs):
         super().__init__(orientation="horizontal", size_hint_y=None, height=dp(56), **kwargs)
         self.sm = sm
-        sekmeler = [
-            ("Analiz", "analiz"), ("Tarama", "tarama"),
-            ("Portföy", "portfoy"), ("Ayarlar", "ayarlar"),
-        ]
+        # Not: sıradaki adımlarda buraya Hisseler, Watchlist, Strateji gibi
+        # sekmeler eklenecek — şimdilik iskelet + Piyasa ekranı hazır.
+        sekmeler = [("Piyasa", "piyasa"), ("Ayarlar", "ayarlar")]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
                          color=RENK_METIN)
@@ -520,9 +327,7 @@ class AnaLayout(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(orientation="vertical", **kwargs)
         sm = ScreenManager()
-        sm.add_widget(AnalizEkrani(name="analiz"))
-        sm.add_widget(TaramaEkrani(name="tarama"))
-        sm.add_widget(PortfoyEkrani(name="portfoy"))
+        sm.add_widget(PiyasaEkrani(name="piyasa"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
