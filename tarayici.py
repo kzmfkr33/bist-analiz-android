@@ -34,7 +34,8 @@ def _tek_hisseyi_analiz_et(sembol, temel_dahil_et=True):
         )
         degerlendirme["gunluk_hacim"] = veri['Volume'].iloc[-1]
         degerlendirme["ortalama_hacim_20g"] = veri['Volume'].rolling(20).mean().iloc[-1]
-
+        degerlendirme["periyot_zirvesi_mi"] = bool(veri['Close'].iloc[-1] >= veri['High'].max())
+        degerlendirme["periyot_dibi_mi"] = bool(veri['Close'].iloc[-1] <= veri['Low'].min())
         if temel_dahil_et:
             temel = temel_veri_getir(sembol)
             degerlendirme["sirket_adi"] = temel.get("sirket_adi")
