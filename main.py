@@ -171,7 +171,8 @@ class PiyasaEkrani(Screen):
             emtialar = doviz_altin_emtia_getir()
             Clock.schedule_once(lambda dt: self._ust_kartlari_goster(endeksler, emtialar))
         except Exception as hata:
-            Clock.schedule_once(lambda dt: self._hata_goster(f"Endeks/döviz verisi alınamadı: {hata}"))
+            mesaj = f"Endeks/döviz verisi alınamadı: {hata}"
+            Clock.schedule_once(lambda dt, m=mesaj: self._hata_goster(m))
             return
 
         self._nabiz_taramasi_yap()
@@ -214,7 +215,8 @@ class PiyasaEkrani(Screen):
             sonuclar = tum_hisseleri_tara(temel_dahil_et=False, max_paralel_islem=10)
             Clock.schedule_once(lambda dt: self._nabzi_goster(sonuclar))
         except Exception as hata:
-            Clock.schedule_once(lambda dt: self._hata_goster(f"Piyasa nabzı taranamadı: {hata}"))
+            mesaj = f"Piyasa nabzı taranamadı: {hata}"
+            Clock.schedule_once(lambda dt, m=mesaj: self._hata_goster(m))
 
     def _nabzi_goster(self, sonuclar):
         self.yenile_btn.disabled = False
@@ -346,7 +348,8 @@ class HisselerEkrani(Screen):
             )
             Clock.schedule_once(lambda dt: self._tarama_bitti(sonuclar))
         except Exception as hata:
-            Clock.schedule_once(lambda dt: uyari_goster("Tarama başarısız", str(hata)))
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Tarama başarısız", m))
             Clock.schedule_once(lambda dt: setattr(self.tara_btn, "disabled", False))
 
     def _tarama_bitti(self, sonuclar):
@@ -465,8 +468,8 @@ class HisseDetayEkrani(Screen):
             }
             Clock.schedule_once(lambda dt: self._goster(paket))
         except Exception as hata:
-            Clock.schedule_once(lambda dt: self._hata_goster(f"Veri alınamadı: {hata}"))
-
+            mesaj = f"Veri alınamadı: {hata}"
+            Clock.schedule_once(lambda dt, m=mesaj: self._hata_goster(m))
     def _goster(self, paket):
         self.durum_etiketi.text = ""
         veri = paket["veri"]
@@ -553,9 +556,11 @@ class HisseDetayEkrani(Screen):
             yorum = hisse_yorumu_uret(self.sembol, api_key)
             Clock.schedule_once(lambda dt: self._ai_yorum_goster(yorum))
         except AIYorumHatasi as hata:
-            Clock.schedule_once(lambda dt: self._ai_yorum_hata(str(hata)))
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: self._ai_yorum_hata(m))
         except Exception as hata:
-            Clock.schedule_once(lambda dt: self._ai_yorum_hata(f"Beklenmeyen hata: {hata}"))
+            mesaj = f"Beklenmeyen hata: {hata}"
+            Clock.schedule_once(lambda dt, m=mesaj: self._ai_yorum_hata(m))
 
     def _ai_yorum_goster(self, yorum):
         self.ai_btn.disabled = False
