@@ -1,17 +1,15 @@
-"""
-BIST Analiz Merkezi - Android (Kivy) sürümü.
-
-Ağ çağrıları (fiyat verisi çekme, tarama) UI'yi kilitlememesi için
-arka plan thread'lerinde çalışır, sonuçlar Clock.schedule_once ile
-ana thread'e (UI thread) geri taşınır.
-"""
 import os
+import sys
 import threading
+import traceback
+
+print("CHECKPOINT 1: basic imports done", flush=True)
 
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.metrics import dp
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.gridlayout import GridLayout
@@ -24,27 +22,43 @@ from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
-# ---------------------------------------------------------------------------
-# Uygulama verilerinin (JSON/log dosyaları) yazılacağı klasörü, içe
-# aktarmalardan ÖNCE ayarlıyoruz — ayarlar.py, log_ayarlari.py, alarm_sistemi.py,
-# watchlist.py, strateji_olusturucu.py gibi modüller dosyaları geçerli
-# çalışma dizinine göre (göreli yol) açıyor.
-# ---------------------------------------------------------------------------
+print("CHECKPOINT 2: kivy imports done", flush=True)
+
 if platform == "android":
     from android.storage import app_storage_path
     _VERI_DIZINI = app_storage_path()
 else:
     _VERI_DIZINI = os.path.join(os.path.expanduser("~"), ".bist_analiz_merkezi")
 
+print("CHECKPOINT 3: storage path resolved: " + str(_VERI_DIZINI), flush=True)
+
 os.makedirs(_VERI_DIZINI, exist_ok=True)
 os.chdir(_VERI_DIZINI)
 
-from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir  # noqa: E402
-from tarayici import (                                                 # noqa: E402
-    tum_hisseleri_tara, en_guclu_20, en_ucuz_20, en_hizli_yukselen_20,
-    hacmi_en_cok_artan_20, teknik_en_guclu_20, asiri_satilan_20, asiri_alinan_20,
-)
-import ayarlar                                                         # noqa: E402
+print("CHECKPOINT 4: chdir done", flush=True)
+
+try:
+    from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir, temel_veri_getir  # noqa: E402
+    print("CHECKPOINT 5: veri_katmani imported", flush=True)
+    from tarayici import (  # noqa: E402
+        tum_hisseleri_tara, en_guclu_20, en_ucuz_20, en_hizli_yukselen_20,
+        hacmi_en_cok_artan_20, teknik_en_guclu_20, asiri_satilan_20, asiri_alinan_20,
+    )
+    print("CHECKPOINT 6: tarayici imported", flush=True)
+    import ayarlar  # noqa: E402
+    print("CHECKPOINT 7: ayarlar imported", flush=True)
+    from test import analiz_et  # noqa: E402
+    from hisse_skoru import hisse_skoru_hesapla  # noqa: E402
+    from teknik_sinyal_merkezi import teknik_gorunum_uret  # noqa: E402
+    from destek_direnc import destek_direnc_bul  # noqa: E402
+    from firsat_tarayici import firsatlari_tespit_et  # noqa: E402
+    from ai_yorum import hisse_yorumu_uret, AIYorumHatasi  # noqa: E402
+    print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
+except Exception:
+    print("CHECKPOINT FAILED during project imports:", flush=True)
+    print(traceback.format_exc(), flush=True)
+    sys.stdout.flush()
+    raise
 
 RENK_ARKAPLAN = (0.07, 0.09, 0.13, 1)
 RENK_KART = (0.12, 0.15, 0.20, 1)
@@ -95,8 +109,6 @@ def uyari_goster(baslik, mesaj):
 
 
 class KartKutu(BoxLayout):
-    """Koyu temalı, köşeleri yuvarlatılmış görünen basit bir 'kart' konteyneri."""
-
     def __init__(self, **kwargs):
         super().__init__(orientation="vertical", padding=dp(12), spacing=dp(6),
                           size_hint_y=None, **kwargs)
@@ -112,9 +124,11 @@ class KartKutu(BoxLayout):
         self._arkaplan.size = self.size
 
 
-# ---------------------------------------------------------------------------
-# EKRAN: Piyasa (Ana Ekran) — plan madde 1
-# ---------------------------------------------------------------------------
+class TiklanabilirKart(ButtonBehavior, KartKutu):
+    """KartKutu ile aynı görünümde ama dokunulabilir (Hisseler listesindeki satırlar için)."""
+    pass
+
+
 class PiyasaEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -263,9 +277,6 @@ class PiyasaEkrani(Screen):
         uyari_goster("Veri alınamadı", mesaj)
 
 
-# ---------------------------------------------------------------------------
-# EKRAN: Hisseler (Screener + Sıralamalar) — plan madde 2, 11
-# ---------------------------------------------------------------------------
 class HisselerEkrani(Screen):
     _SIRALAMA_SECENEKLERI = [
         "Genel Puan", "En Ucuz (F/K)", "En Hızlı Yükselen", "Hacmi En Çok Artan",
@@ -296,8 +307,9 @@ class HisselerEkrani(Screen):
         kok.add_widget(self.ilerleme)
 
         self.durum_etiketi = Label(
-            text="Taramak için 'Tara'ya bas (~50 hisse, temel veriler dahil — biraz sürebilir).",
-            size_hint_y=None, height=dp(40), color=RENK_NOTR,
+            text="Taramak için 'Tara'ya bas (~50 hisse, temel veriler dahil — biraz sürebilir). "
+                 "Bir hisseye dokununca detay ekranı açılır.",
+            size_hint_y=None, height=dp(50), color=RENK_NOTR,
         )
         self.durum_etiketi.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
         kok.add_widget(self.durum_etiketi)
@@ -340,7 +352,7 @@ class HisselerEkrani(Screen):
     def _tarama_bitti(self, sonuclar):
         self.tara_btn.disabled = False
         self._son_tarama_sonuclari = sonuclar
-        self.durum_etiketi.text = f"{len(sonuclar)} hisse tarandı."
+        self.durum_etiketi.text = f"{len(sonuclar)} hisse tarandı. Detay için dokun."
         self._listeyi_goster()
 
     def _siralama_degisti(self, *args):
@@ -371,7 +383,9 @@ class HisselerEkrani(Screen):
             return
 
         for s in liste:
-            kart = KartKutu()
+            kart = TiklanabilirKart()
+            kart.bind(on_release=lambda inst, sembol=s["sembol"]: self._hisseye_git(sembol))
+
             fk = s.get("fk_orani")
             fk_metni = f"F/K {fk:.1f}" if fk is not None else "F/K -"
             degisim = s.get("degisim_yuzde_1g")
@@ -389,10 +403,174 @@ class HisselerEkrani(Screen):
             kart.add_widget(govde_etiketi(s.get("genel_degerlendirme", ""), renk=renk))
             self.sonuc_kutusu.add_widget(kart)
 
+    def _hisseye_git(self, sembol):
+        detay_ekrani = self.manager.get_screen("hisse_detay")
+        detay_ekrani.hisseyi_yukle(sembol)
+        self.manager.transition = SlideTransition(duration=0.15)
+        self.manager.current = "hisse_detay"
 
-# ---------------------------------------------------------------------------
-# EKRAN: Ayarlar
-# ---------------------------------------------------------------------------
+
+class HisseDetayEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        self.geri_btn = Button(text="< Geri", size_hint_x=0.3, background_color=(0.10, 0.12, 0.17, 1))
+        self.geri_btn.bind(on_release=self._geri_don)
+        ust_satir.add_widget(self.geri_btn)
+        self.baslik_lbl = baslik_etiketi("Hisse Detay", 18)
+        ust_satir.add_widget(self.baslik_lbl)
+        kok.add_widget(ust_satir)
+
+        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(22), color=RENK_NOTR)
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.icerik_kutusu = BoxLayout(orientation="vertical", spacing=dp(10),
+                                        size_hint_y=None, padding=(0, dp(4)))
+        self.icerik_kutusu.bind(minimum_height=self.icerik_kutusu.setter("height"))
+        kaydirma.add_widget(self.icerik_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+        self.sembol = None
+        self.ai_btn = None
+        self.ai_sonuc_etiketi = None
+
+    def _geri_don(self, *args):
+        self.manager.transition = SlideTransition(duration=0.15)
+        self.manager.current = "hisseler"
+
+    def hisseyi_yukle(self, sembol):
+        self.sembol = sembol
+        self.baslik_lbl.text = sembol
+        self.durum_etiketi.text = "Yükleniyor..."
+        self.icerik_kutusu.clear_widgets()
+        threading.Thread(target=self._veriyi_getir, daemon=True).start()
+
+    def _veriyi_getir(self):
+        try:
+            veri = analiz_et(self.sembol)
+            temel = temel_veri_getir(self.sembol)
+            skor = hisse_skoru_hesapla(veri, temel)
+            teknik_gorunum = teknik_gorunum_uret(veri.iloc[-1])
+            seviyeler = destek_direnc_bul(veri)
+            firsatlar = firsatlari_tespit_et(veri)
+
+            paket = {
+                "veri": veri, "temel": temel, "skor": skor,
+                "teknik_gorunum": teknik_gorunum, "seviyeler": seviyeler,
+                "firsatlar": firsatlar,
+            }
+            Clock.schedule_once(lambda dt: self._goster(paket))
+        except Exception as hata:
+            Clock.schedule_once(lambda dt: self._hata_goster(f"Veri alınamadı: {hata}"))
+
+    def _goster(self, paket):
+        self.durum_etiketi.text = ""
+        veri = paket["veri"]
+        temel = paket["temel"]
+        skor = paket["skor"]
+        son = veri.iloc[-1]
+
+        sirket_adi = temel.get("sirket_adi") or self.sembol
+
+        ust_kart = KartKutu()
+        ust_kart.add_widget(baslik_etiketi(sirket_adi, 16))
+        ust_kart.add_widget(govde_etiketi(f"Kapanış: {son['Close']:.2f} TL"))
+        self.icerik_kutusu.add_widget(ust_kart)
+
+        genel_skor = skor.get("genel")
+        skor_kart = KartKutu()
+        skor_kart.add_widget(baslik_etiketi(
+            f"Genel Skor: {genel_skor}/100" if genel_skor is not None else "Genel Skor: -", 16
+        ))
+        for alan, etiket in [
+            ("trend", "Trend"), ("momentum", "Momentum"), ("teknik", "Teknik"),
+            ("hacim", "Hacim"), ("temel", "Temel"), ("degerleme", "Değerleme"),
+        ]:
+            p = skor[alan]["puan"]
+            metin = f"{etiket}: {p:.0f}/100" if p is not None else f"{etiket}: veri yok"
+            skor_kart.add_widget(govde_etiketi(metin))
+        self.icerik_kutusu.add_widget(skor_kart)
+
+        tg = paket["teknik_gorunum"]
+        renk = RENK_OLUMLU if tg["puan"] >= 2 else (RENK_OLUMSUZ if tg["puan"] <= -2 else RENK_NOTR)
+        sinyal_kart = KartKutu()
+        sinyal_kart.add_widget(baslik_etiketi("Teknik Sinyal Merkezi", 16))
+        sinyal_kart.add_widget(govde_etiketi(tg["etiket"], renk=renk))
+        self.icerik_kutusu.add_widget(sinyal_kart)
+
+        seviyeler = paket["seviyeler"]
+        dd_kart = KartKutu()
+        dd_kart.add_widget(baslik_etiketi("Destek / Direnç", 16))
+        if seviyeler["direncler"]:
+            for d in seviyeler["direncler"]:
+                dd_kart.add_widget(govde_etiketi(
+                    f"Direnç: {d['seviye']} TL  ({'*' * d['guc']})", renk=RENK_OLUMSUZ
+                ))
+        if seviyeler["destekler"]:
+            for d in seviyeler["destekler"]:
+                dd_kart.add_widget(govde_etiketi(
+                    f"Destek: {d['seviye']} TL  ({'*' * d['guc']})", renk=RENK_OLUMLU
+                ))
+        if not seviyeler["direncler"] and not seviyeler["destekler"]:
+            dd_kart.add_widget(govde_etiketi("Belirgin bir seviye tespit edilemedi."))
+        self.icerik_kutusu.add_widget(dd_kart)
+
+        firsatlar = paket["firsatlar"]
+        firsat_kart = KartKutu()
+        firsat_kart.add_widget(baslik_etiketi("Fırsat Sinyalleri", 16))
+        if firsatlar:
+            for f in firsatlar:
+                firsat_kart.add_widget(govde_etiketi(f"+ {f}", renk=RENK_OLUMLU))
+        else:
+            firsat_kart.add_widget(govde_etiketi("Belirgin bir fırsat sinyali yok."))
+        self.icerik_kutusu.add_widget(firsat_kart)
+
+        ai_kart = KartKutu()
+        ai_kart.add_widget(baslik_etiketi("AI Yorum", 16))
+        self.ai_sonuc_etiketi = govde_etiketi("Henüz oluşturulmadı.")
+        ai_kart.add_widget(self.ai_sonuc_etiketi)
+        self.ai_btn = Button(text="AI Yorum Al", size_hint_y=None, height=dp(44), background_color=RENK_VURGU)
+        self.ai_btn.bind(on_release=self._ai_yorum_al)
+        ai_kart.add_widget(self.ai_btn)
+        self.icerik_kutusu.add_widget(ai_kart)
+
+    def _ai_yorum_al(self, *args):
+        ayarlar_veri = ayarlar.ayarlari_oku()
+        api_key = ayarlar_veri.get("gemini_api_key")
+        if not api_key:
+            uyari_goster("API anahtarı yok", "Ayarlar ekranından Gemini API anahtarını girmen gerekiyor.")
+            return
+        self.ai_btn.disabled = True
+        self.ai_sonuc_etiketi.text = "AI yorum oluşturuluyor..."
+        threading.Thread(target=self._ai_yorum_getir, args=(api_key,), daemon=True).start()
+
+    def _ai_yorum_getir(self, api_key):
+        try:
+            yorum = hisse_yorumu_uret(self.sembol, api_key)
+            Clock.schedule_once(lambda dt: self._ai_yorum_goster(yorum))
+        except AIYorumHatasi as hata:
+            Clock.schedule_once(lambda dt: self._ai_yorum_hata(str(hata)))
+        except Exception as hata:
+            Clock.schedule_once(lambda dt: self._ai_yorum_hata(f"Beklenmeyen hata: {hata}"))
+
+    def _ai_yorum_goster(self, yorum):
+        self.ai_btn.disabled = False
+        self.ai_sonuc_etiketi.text = yorum
+
+    def _ai_yorum_hata(self, mesaj):
+        self.ai_btn.disabled = False
+        self.ai_sonuc_etiketi.text = "Yorum alınamadı."
+        uyari_goster("AI yorum alınamadı", mesaj)
+
+    def _hata_goster(self, mesaj):
+        self.durum_etiketi.text = ""
+        uyari_goster("Veri alınamadı", mesaj)
+
+
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -428,7 +606,7 @@ class AyarlarEkrani(Screen):
 
         self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(24), color=RENK_METIN)
         kok.add_widget(self.durum_etiketi)
-        kok.add_widget(BoxLayout())  # boşluk doldurucu
+        kok.add_widget(BoxLayout())
 
         self.add_widget(kok)
 
@@ -444,14 +622,10 @@ class AyarlarEkrani(Screen):
         self.durum_etiketi.text = "Kaydedildi."
 
 
-# ---------------------------------------------------------------------------
-# Alt gezinme çubuğu + ana uygulama
-# ---------------------------------------------------------------------------
 class AltMenu(BoxLayout):
     def __init__(self, sm, **kwargs):
         super().__init__(orientation="horizontal", size_hint_y=None, height=dp(56), **kwargs)
         self.sm = sm
-        # Not: sıradaki adımlarda buraya Watchlist, Sektör, Strateji sekmeleri eklenecek.
         sekmeler = [("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Ayarlar", "ayarlar")]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
@@ -470,6 +644,7 @@ class AnaLayout(BoxLayout):
         sm = ScreenManager()
         sm.add_widget(PiyasaEkrani(name="piyasa"))
         sm.add_widget(HisselerEkrani(name="hisseler"))
+        sm.add_widget(HisseDetayEkrani(name="hisse_detay"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
@@ -488,4 +663,12 @@ class BistAnalizApp(App):
 
 
 if __name__ == "__main__":
-    BistAnalizApp().run()
+    print("CHECKPOINT 8: entering run()", flush=True)
+    try:
+        BistAnalizApp().run()
+    except Exception:
+        print("CHECKPOINT FAILED inside run():", flush=True)
+        print(traceback.format_exc(), flush=True)
+        sys.stdout.flush()
+        raise
+    print("CHECKPOINT 9: run() returned normally", flush=True)
