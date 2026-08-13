@@ -149,7 +149,10 @@ def hisse_yorumu_uret(sembol, api_key, sektordeki_diger_hisseler=None):
             "bir anahtar ekleyebilirsin (aistudio.google.com/app/apikey)."
         )
 
-    veri_paketi = zengin_analiz_verisi_olustur(sembol, sektordeki_diger_hisseler)
+    try:
+        veri_paketi = zengin_analiz_verisi_olustur(sembol, sektordeki_diger_hisseler)
+    except Exception as e:
+        raise AIYorumHatasi(f"Analiz verisi hazırlanırken hata oluştu: {e}") from e
 
     govde = {
         "contents": [
