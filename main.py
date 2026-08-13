@@ -565,10 +565,19 @@ class HisseDetayEkrani(Screen):
     def _metin_ve_yukseklik_guncelle(self, label, yeni_metin):
         """Bir Label'ın metnini değiştirdikten sonra yüksekliğini SENKRON olarak
         yeniden hesaplar — otomatik texture_size bağlantısı uzun/çok satırlı
-        metinlerde bazen gecikmeli tetiklenip metni kesilmiş gösterebiliyor."""
+        metinlerde bazen gecikmeli tetiklenip metni kesilmiş gösterebiliyor.
+        Ayrıca iç içe kutuların (kart -> kaydırma alanı) yükseklik zincirinin
+        otomatik güncellenmediği durumlar için üst kapsayıcıları elle
+        yeniden hizalıyoruz."""
         label.text = yeni_metin
+        label.text_size = (label.width, None)
         label.texture_update()
         label.height = label.texture_size[1]
+
+        ust = label.parent
+        while ust is not None and hasattr(ust, "do_layout"):
+            ust.do_layout()
+            ust = ust.parent
 
     def _ai_yorum_goster(self, yorum):
         self.ai_btn.disabled = False
