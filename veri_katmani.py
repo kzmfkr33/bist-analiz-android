@@ -3,6 +3,12 @@ Android derlemesini basitleştirmek için yfinance yerine doğrudan Yahoo
 Finance'in genel JSON uçlarına 'requests' ile istek atıyoruz. yfinance'ın
 kendisi de arka planda aynı uçları kullanır; burada sadece lxml/peewee gibi
 python-for-android'de sorun çıkarabilecek ek bağımlılıkları elimine ediyoruz.
+
+Not: Yahoo, temel veri (F/K, PD/DD vb.) döndüren 'quoteSummary' uçlarını bir
+süredir bir 'crumb' güvenlik token'ı olmadan reddediyor (401 Unauthorized).
+Bu yüzden bir requests.Session ile önce çerez + crumb alıyor, sonra bunu
+temel veri isteklerine ekliyoruz. Fiyat/grafik verisi ('chart' ucu) bundan
+etkilenmiyor, crumb gerektirmiyor.
 """
 import time
 
@@ -18,7 +24,6 @@ _PERIYOT_GUN = {
     "1mo": 31, "2mo": 62, "3mo": 93, "6mo": 186, "1y": 372, "2y": 744, "5y": 1860,
 }
 
-# Piyasa Ana Ekranı için endeks / döviz / emtia sembolleri (Yahoo Finance formatı)
 ENDEKS_SEMBOLLERI = {
     "BIST 100": "XU100.IS",
     "BIST 30": "XU030.IS",
@@ -34,19 +39,41 @@ EMTIA_DOVIZ_SEMBOLLERI = {
     "Brent Petrol": "BZ=F",
 }
 
+_oturum = requests.Session()
+_oturum.headers.update(_HEADERS)
+_crumb_onbellek = {"crumb": None}
+
+
+def _crumb_al():
+    """
+    Yahoo'nun temel veri uçları için gerektirdiği 'crumb' token'ını alır.
+    Bir kere alınıp bellekte tutulur (her istekte yeniden almaya gerek yok).
+    Alınamazsa None döner — çağıran taraf bu durumda crumb'sız dener.
+    """
+    if _crumb_onbellek["crumb"]:
+        return _crumb_onbellek["crumb"]
+
+    try:
+        _oturum.get("https://fc.yahoo.com", timeout=10)
+        yanit = _oturum.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=10)
+        yanit.raise_for_status()
+        crumb = yanit.text.strip()
+        if crumb and "<html" not in crumb.lower():
+            _crumb_onbellek["crumb"] = crumb
+            return crumb
+    except Exception as hata:
+        log.warning(f"Crumb alınamadı: {hata}")
+
+    return None
+
 
 def fiyat_verisi_getir(sembol, periyot="3mo", deneme_sayisi=3):
-    """
-    Belirtilen hissenin/endeksin/emtianın geçmiş fiyat verisini Yahoo Finance
-    'chart' API'sinden getirir. Bağlantı hatası olursa katlanarak artan
-    bekleme süresiyle birkaç kez tekrar dener.
-    """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sembol}"
     params = {"range": periyot, "interval": "1d"}
 
     for deneme in range(deneme_sayisi):
         try:
-            yanit = requests.get(url, params=params, headers=_HEADERS, timeout=15)
+            yanit = _oturum.get(url, params=params, timeout=15)
             yanit.raise_for_status()
             veri_json = yanit.json()
 
@@ -86,17 +113,15 @@ def fiyat_verisi_getir(sembol, periyot="3mo", deneme_sayisi=3):
 
 
 def temel_veri_getir(sembol):
-    """
-    Şirketin temel (fundamental) verilerini getirir:
-    F/K oranı, PD/DD oranı, piyasa değeri, temettü verimi, sektör.
-    Not: Yahoo Finance bazı BIST hisseleri için bu verilerin bir kısmını
-    döndürmeyebilir (None olarak gelebilir) — bu normaldir.
-    """
     url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{sembol}"
     params = {"modules": "summaryDetail,defaultKeyStatistics,price,assetProfile,financialData"}
 
+    crumb = _crumb_al()
+    if crumb:
+        params["crumb"] = crumb
+
     try:
-        yanit = requests.get(url, params=params, headers=_HEADERS, timeout=15)
+        yanit = _oturum.get(url, params=params, timeout=15)
         yanit.raise_for_status()
         sonuc = yanit.json()["quoteSummary"]["result"][0]
 
@@ -131,11 +156,6 @@ def temel_veri_getir(sembol):
 
 
 def endeks_verisi_getir(periyot="3mo"):
-    """
-    Piyasa Ana Ekranı için BIST 100/30/Banka/Sınai/Hizmet endekslerinin
-    fiyat verisini getirir. Dönüş: {"BIST 100": DataFrame, ...}
-    Hata alan endeks sonuçta yer almaz (diğerleri etkilenmez).
-    """
     sonuclar = {}
     for isim, sembol in ENDEKS_SEMBOLLERI.items():
         try:
@@ -146,10 +166,6 @@ def endeks_verisi_getir(periyot="3mo"):
 
 
 def doviz_altin_emtia_getir(periyot="1mo"):
-    """
-    Piyasa Ana Ekranı için USD/TRY, EUR/TRY, altın ve Brent petrol
-    verisini getirir. Dönüş: {"USD/TRY": DataFrame, ...}
-    """
     sonuclar = {}
     for isim, sembol in EMTIA_DOVIZ_SEMBOLLERI.items():
         try:
@@ -157,21 +173,18 @@ def doviz_altin_emtia_getir(periyot="1mo"):
         except Exception as hata:
             log.warning(f"{isim} ({sembol}) verisi alınamadı: {hata}")
     return sonuclar
-def gecmis_finansal_veriler_getir(sembol, yil_sayisi=4):
-    """
-    Son yıllara ait satış, net kâr ve FAVÖK (yaklaşık) verilerini getirir.
-    Kaynak: Yahoo Finance quoteSummary 'incomeStatementHistory' modülü.
 
-    Not: FAVÖK burada EBIT (faiz ve vergi öncesi kâr) ile yaklaşık
-    alınmıştır — amortisman verisi her şirket için ayrı gelmediğinden tam
-    FAVÖK değil, yakın bir vekildir. Kesin FAVÖK için resmi bilançoya
-    bakılmalıdır.
-    """
+
+def gecmis_finansal_veriler_getir(sembol, yil_sayisi=4):
     url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{sembol}"
     params = {"modules": "incomeStatementHistory"}
 
+    crumb = _crumb_al()
+    if crumb:
+        params["crumb"] = crumb
+
     try:
-        yanit = requests.get(url, params=params, headers=_HEADERS, timeout=15)
+        yanit = _oturum.get(url, params=params, timeout=15)
         yanit.raise_for_status()
         sonuc = yanit.json()["quoteSummary"]["result"][0]
         yillik_kayitlar = sonuc.get("incomeStatementHistory", {}).get("incomeStatementHistory", [])
