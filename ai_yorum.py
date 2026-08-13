@@ -19,7 +19,7 @@ from firsat_tarayici import firsatlari_tespit_et
 from relative_guc import relative_strength_hesapla, bist100_getir
 from temel_analiz import sektore_gore_degerleme
 
-_GEMINI_MODEL = "gemini-2.5-flash"
+_GEMINI_MODEL = "gemini-flash-latest"
 _GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/"
     f"{_GEMINI_MODEL}:generateContent"
