@@ -562,13 +562,22 @@ class HisseDetayEkrani(Screen):
             mesaj = f"Beklenmeyen hata: {hata}"
             Clock.schedule_once(lambda dt, m=mesaj: self._ai_yorum_hata(m))
 
+    def _metin_ve_yukseklik_guncelle(self, label, yeni_metin):
+        """Bir Label'ın metnini değiştirdikten sonra yüksekliğini SENKRON olarak
+        yeniden hesaplar — otomatik texture_size bağlantısı uzun/çok satırlı
+        metinlerde bazen gecikmeli tetiklenip metni kesilmiş gösterebiliyor."""
+        label.text = yeni_metin
+        label.texture_update()
+        label.height = label.texture_size[1]
+
     def _ai_yorum_goster(self, yorum):
         self.ai_btn.disabled = False
-        self.ai_sonuc_etiketi.text = yorum
+        self._metin_ve_yukseklik_guncelle(self.ai_sonuc_etiketi, yorum)
 
     def _ai_yorum_hata(self, mesaj):
         self.ai_btn.disabled = False
-        self.ai_sonuc_etiketi.text = "Yorum alınamadı."
+        self._metin_ve_yukseklik_guncelle(self.ai_sonuc_etiketi, "Yorum alınamadı.")
+        uyari_goster("AI yorum alınamadı", mesaj)
         uyari_goster("AI yorum alınamadı", mesaj)
 
     def _hata_goster(self, mesaj):
