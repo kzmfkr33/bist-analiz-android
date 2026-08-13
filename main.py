@@ -1,9 +1,12 @@
-import os
-import sys
-import threading
-import traceback
+"""
+BIST Analiz Merkezi - Android (Kivy) sürümü.
 
-print("CHECKPOINT 1: basic imports done", flush=True)
+Ağ çağrıları (fiyat verisi çekme, tarama) UI'yi kilitlememesi için
+arka plan thread'lerinde çalışır, sonuçlar Clock.schedule_once ile
+ana thread'e (UI thread) geri taşınır.
+"""
+import os
+import threading
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -21,36 +24,27 @@ from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 from kivy.utils import platform
 
-print("CHECKPOINT 2: kivy imports done", flush=True)
-
+# ---------------------------------------------------------------------------
+# Uygulama verilerinin (JSON/log dosyaları) yazılacağı klasörü, içe
+# aktarmalardan ÖNCE ayarlıyoruz — ayarlar.py, log_ayarlari.py, alarm_sistemi.py,
+# watchlist.py, strateji_olusturucu.py gibi modüller dosyaları geçerli
+# çalışma dizinine göre (göreli yol) açıyor.
+# ---------------------------------------------------------------------------
 if platform == "android":
     from android.storage import app_storage_path
     _VERI_DIZINI = app_storage_path()
 else:
     _VERI_DIZINI = os.path.join(os.path.expanduser("~"), ".bist_analiz_merkezi")
 
-print("CHECKPOINT 3: storage path resolved: " + str(_VERI_DIZINI), flush=True)
-
 os.makedirs(_VERI_DIZINI, exist_ok=True)
 os.chdir(_VERI_DIZINI)
 
-print("CHECKPOINT 4: chdir done", flush=True)
-
-try:
-    from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir  # noqa: E402
-    print("CHECKPOINT 5: veri_katmani imported", flush=True)
-    from tarayici import (                                                 # noqa: E402
-        tum_hisseleri_tara, en_guclu_20, en_ucuz_20, en_hizli_yukselen_20,
-        hacmi_en_cok_artan_20, teknik_en_guclu_20, asiri_satilan_20, asiri_alinan_20,
-    )
-    print("CHECKPOINT 6: tarayici imported", flush=True)
-    import ayarlar                                                         # noqa: E402
-    print("CHECKPOINT 7: ayarlar imported", flush=True)
-except Exception:
-    print("CHECKPOINT FAILED during project imports:", flush=True)
-    print(traceback.format_exc(), flush=True)
-    sys.stdout.flush()
-    raise                                                # noqa: E402
+from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir  # noqa: E402
+from tarayici import (                                                 # noqa: E402
+    tum_hisseleri_tara, en_guclu_20, en_ucuz_20, en_hizli_yukselen_20,
+    hacmi_en_cok_artan_20, teknik_en_guclu_20, asiri_satilan_20, asiri_alinan_20,
+)
+import ayarlar                                                         # noqa: E402
 
 RENK_ARKAPLAN = (0.07, 0.09, 0.13, 1)
 RENK_KART = (0.12, 0.15, 0.20, 1)
@@ -481,4 +475,17 @@ class AnaLayout(BoxLayout):
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
                             color=RENK_METIN, size_hint_y=None, height=dp(50))
 
-        self.add_widget
+        self.add_widget(ust_baslik)
+        self.add_widget(sm)
+        self.add_widget(AltMenu(sm))
+
+
+class BistAnalizApp(App):
+    title = "BIST Analiz Merkezi"
+
+    def build(self):
+        return AnaLayout()
+
+
+if __name__ == "__main__":
+    BistAnalizApp().run()
