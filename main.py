@@ -575,7 +575,7 @@ class HisseDetayEkrani(Screen):
 
         pop = Popup(title="AI Yorum", content=icerik, size_hint=(0.92, 0.85))
         kapat.bind(on_release=pop.dismiss)
-        pop.open()c
+        pop.open()
 
     def _ai_yorum_getir(self, api_key):
         try:
