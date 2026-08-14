@@ -160,7 +160,8 @@ def hisse_yorumu_uret(sembol, api_key, sektordeki_diger_hisseler=None):
         ],
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 500,
+            "maxOutputTokens": 2000,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
