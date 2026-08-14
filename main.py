@@ -440,6 +440,7 @@ class HisseDetayEkrani(Screen):
         self.sembol = None
         self.ai_btn = None
         self.ai_sonuc_etiketi = None
+        self.ai_kart = None
 
     def _geri_don(self, *args):
         self.manager.transition = SlideTransition(duration=0.15)
@@ -539,8 +540,8 @@ class HisseDetayEkrani(Screen):
         self.ai_btn = Button(text="AI Yorum Al", size_hint_y=None, height=dp(44), background_color=RENK_VURGU)
         self.ai_btn.bind(on_release=self._ai_yorum_al)
         ai_kart.add_widget(self.ai_btn)
+        self.ai_kart = ai_kart
         self.icerik_kutusu.add_widget(ai_kart)
-
     def _ai_yorum_al(self, *args):
         ayarlar_veri = ayarlar.ayarlari_oku()
         api_key = ayarlar_veri.get("gemini_api_key")
@@ -562,31 +563,33 @@ class HisseDetayEkrani(Screen):
             mesaj = f"Beklenmeyen hata: {hata}"
             Clock.schedule_once(lambda dt, m=mesaj: self._ai_yorum_hata(m))
 
-    def _metin_ve_yukseklik_guncelle(self, label, yeni_metin):
-        """Bir Label'ın metnini değiştirdikten sonra yüksekliğini SENKRON olarak
-        yeniden hesaplar — otomatik texture_size bağlantısı uzun/çok satırlı
-        metinlerde bazen gecikmeli tetiklenip metni kesilmiş gösterebiliyor.
-        Ayrıca iç içe kutuların (kart -> kaydırma alanı) yükseklik zincirinin
-        otomatik güncellenmediği durumlar için üst kapsayıcıları elle
-        yeniden hizalıyoruz."""
-        label.text = yeni_metin
-        label.text_size = (label.width, None)
-        label.texture_update()
-        label.height = label.texture_size[1]
+    def _ai_karti_yeniden_olustur(self, metin):
+        """AI Yorum kartını sıfırdan yeniden kurar. Var olan bir Label'ın
+        metnini değiştirip yüksekliğini otomatik zincirin güncellemesini
+        beklemek yerine, doğru boyutta YENİ bir Label oluşturup kartı
+        baştan dolduruyoruz — bu, gecikmeli/güncellenmeyen yükseklik
+        sorununu kesin olarak çözer."""
+        kart = self.ai_kart
+        kart.clear_widgets()
+        kart.add_widget(baslik_etiketi("AI Yorum", 16))
 
-        ust = label.parent
-        while ust is not None and hasattr(ust, "do_layout"):
-            ust.do_layout()
-            ust = ust.parent
+        genislik = (kart.width - dp(24)) if kart.width > dp(24) else (Window.width - dp(48))
+        etiket = govde_etiketi(metin)
+        etiket.text_size = (genislik, None)
+        etiket.texture_update()
+        etiket.height = etiket.texture_size[1]
+        kart.add_widget(etiket)
+        self.ai_sonuc_etiketi = etiket
+
+        kart.add_widget(self.ai_btn)
 
     def _ai_yorum_goster(self, yorum):
         self.ai_btn.disabled = False
-        self._metin_ve_yukseklik_guncelle(self.ai_sonuc_etiketi, yorum)
+        self._ai_karti_yeniden_olustur(yorum)
 
     def _ai_yorum_hata(self, mesaj):
         self.ai_btn.disabled = False
-        self._metin_ve_yukseklik_guncelle(self.ai_sonuc_etiketi, "Yorum alınamadı.")
-        uyari_goster("AI yorum alınamadı", mesaj)
+        self._ai_karti_yeniden_olustur("Yorum alınamadı.")
         uyari_goster("AI yorum alınamadı", mesaj)
 
     def _hata_goster(self, mesaj):
