@@ -441,6 +441,7 @@ class HisseDetayEkrani(Screen):
         self.ai_btn = None
         self.ai_sonuc_etiketi = None
         self.ai_kart = None
+        self._son_ai_yorum = None
 
     def _geri_don(self, *args):
         self.manager.transition = SlideTransition(duration=0.15)
@@ -451,6 +452,7 @@ class HisseDetayEkrani(Screen):
         self.baslik_lbl.text = sembol
         self.durum_etiketi.text = "Yükleniyor..."
         self.icerik_kutusu.clear_widgets()
+        self._son_ai_yorum = None
         threading.Thread(target=self._veriyi_getir, daemon=True).start()
 
     def _veriyi_getir(self):
@@ -543,6 +545,10 @@ class HisseDetayEkrani(Screen):
         self.ai_kart = ai_kart
         self.icerik_kutusu.add_widget(ai_kart)
     def _ai_yorum_al(self, *args):
+        if self._son_ai_yorum:
+            self._ai_yorum_popup_ac(self._son_ai_yorum)
+            return
+
         ayarlar_veri = ayarlar.ayarlari_oku()
         api_key = ayarlar_veri.get("gemini_api_key")
         if not api_key:
@@ -551,6 +557,25 @@ class HisseDetayEkrani(Screen):
         self.ai_btn.disabled = True
         self.ai_sonuc_etiketi.text = "AI yorum oluşturuluyor..."
         threading.Thread(target=self._ai_yorum_getir, args=(api_key,), daemon=True).start()
+
+    def _ai_yorum_popup_ac(self, metin):
+        """AI yorumunu ayrı, kendi içinde kaydırılabilir bir pencerede gösterir —
+        kart içine gömülü metinlerde yaşanan yükseklik hesaplama sorunlarını
+        tamamen ortadan kaldırır."""
+        icerik = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+
+        kaydirma = ScrollView()
+        etiket = govde_etiketi(metin)
+        etiket.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
+        kaydirma.add_widget(etiket)
+        icerik.add_widget(kaydirma)
+
+        kapat = Button(text="Kapat", size_hint_y=None, height=dp(45))
+        icerik.add_widget(kapat)
+
+        pop = Popup(title="AI Yorum", content=icerik, size_hint=(0.92, 0.85))
+        kapat.bind(on_release=pop.dismiss)
+        pop.open()c
 
     def _ai_yorum_getir(self, api_key):
         try:
@@ -563,37 +588,16 @@ class HisseDetayEkrani(Screen):
             mesaj = f"Beklenmeyen hata: {hata}"
             Clock.schedule_once(lambda dt, m=mesaj: self._ai_yorum_hata(m))
 
-    def _ai_karti_yeniden_olustur(self, metin):
-        """AI Yorum kartını sıfırdan yeniden kurar. Kivy'de bir Label'ın
-        gerçek metin yüksekliği (texture_size), widget ekrana yerleşip
-        GERÇEK genişliğini alana kadar doğru hesaplanmıyor — bu yüzden
-        widget'ı önce normal şekilde ekliyoruz, sonra BİR KARE (frame)
-        bekleyip, artık gerçek genişliği belli olduğunda yüksekliği
-        elle kesinleştiriyoruz."""
-        kart = self.ai_kart
-        kart.clear_widgets()
-        kart.add_widget(baslik_etiketi("AI Yorum", 16))
-
-        etiket = govde_etiketi(metin)
-        kart.add_widget(etiket)
-        self.ai_sonuc_etiketi = etiket
-
-        kart.add_widget(self.ai_btn)
-
-        Clock.schedule_once(lambda dt: self._ai_etiketini_kesin_boyutlandir(etiket), 0)
-
-    def _ai_etiketini_kesin_boyutlandir(self, etiket):
-        etiket.text_size = (etiket.width, None)
-        etiket.texture_update()
-        etiket.height = etiket.texture_size[1]
-
     def _ai_yorum_goster(self, yorum):
         self.ai_btn.disabled = False
-        self._ai_karti_yeniden_olustur(yorum)
+        self._son_ai_yorum = yorum
+        self.ai_sonuc_etiketi.text = "Yorum hazır — görüntülemek için tekrar dokun."
+        self.ai_btn.text = "Yorumu Görüntüle"
+        self._ai_yorum_popup_ac(yorum)
 
     def _ai_yorum_hata(self, mesaj):
         self.ai_btn.disabled = False
-        self._ai_karti_yeniden_olustur("Yorum alınamadı.")
+        self.ai_sonuc_etiketi.text = "Yorum alınamadı."
         uyari_goster("AI yorum alınamadı", mesaj)
 
     def _hata_goster(self, mesaj):
