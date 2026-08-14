@@ -53,6 +53,8 @@ try:
     from destek_direnc import destek_direnc_bul  # noqa: E402
     from firsat_tarayici import firsatlari_tespit_et  # noqa: E402
     from ai_yorum import hisse_yorumu_uret, AIYorumHatasi  # noqa: E402
+    from watchlist import watchlist_getir, watchlist_ekle, watchlist_cikar, watchlist_verilerini_getir  # noqa: E402
+    from alarm_sistemi import alarm_olustur, alarm_sil, alarmlari_listele, alarmlari_kontrol_et  # noqa: E402
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -604,6 +606,304 @@ class HisseDetayEkrani(Screen):
         self.durum_etiketi.text = ""
         uyari_goster("Veri alınamadı", mesaj)
 
+_ALARM_TUR_ETIKETLERI = {
+    "fiyat": "Fiyat",
+    "rsi": "RSI",
+    "hacim": "Hacim (RVOL)",
+    "macd_kesisim_yukari": "MACD Yukarı Kesişim",
+    "macd_kesisim_asagi": "MACD Aşağı Kesişim",
+    "teknik_skor": "Teknik Skor",
+    "genel_skor": "Genel Skor",
+    "destek_kirilma": "Destek Kırılması",
+    "direnc_kirilma": "Direnç Kırılması",
+}
+_ALARM_TUR_TERS = {v: k for k, v in _ALARM_TUR_ETIKETLERI.items()}
+_ESIK_GEREKTIREN_TURLER = {"fiyat", "rsi", "hacim", "teknik_skor", "genel_skor"}
+
+
+# ---------------------------------------------------------------------------
+# EKRAN: Watchlist — plan madde 23
+# ---------------------------------------------------------------------------
+class WatchlistEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        ust_satir.add_widget(baslik_etiketi("Watchlist", 20))
+        self.ekle_btn = Button(text="+ Ekle", size_hint_x=0.3, background_color=RENK_VURGU)
+        self.ekle_btn.bind(on_release=lambda i: self._sembol_ekleme_popup_ac())
+        ust_satir.add_widget(self.ekle_btn)
+        self.yenile_btn = Button(text="Yenile", size_hint_x=0.3, background_color=(0.10, 0.12, 0.17, 1))
+        self.yenile_btn.bind(on_release=self._yenile)
+        ust_satir.add_widget(self.yenile_btn)
+        kok.add_widget(ust_satir)
+
+        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(22), color=RENK_NOTR)
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(6),
+                                       size_hint_y=None, padding=(0, dp(4)))
+        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
+        kaydirma.add_widget(self.sonuc_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+
+    def on_enter(self, *args):
+        self._yenile()
+
+    def _yenile(self, *args):
+        semboller = watchlist_getir()
+        if not semboller:
+            self.sonuc_kutusu.clear_widgets()
+            self.sonuc_kutusu.add_widget(govde_etiketi(
+                "Watchlist boş. Sağ üstteki '+ Ekle' ile hisse ekleyebilirsin."
+            ))
+            self.durum_etiketi.text = ""
+            return
+
+        self.yenile_btn.disabled = True
+        self.durum_etiketi.text = "Yükleniyor..."
+        threading.Thread(target=self._veriyi_getir, args=(semboller,), daemon=True).start()
+
+    def _veriyi_getir(self, semboller):
+        try:
+            veriler = watchlist_verilerini_getir(semboller)
+            Clock.schedule_once(lambda dt: self._listeyi_goster(veriler))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Watchlist yüklenemedi", m))
+            Clock.schedule_once(lambda dt: setattr(self.yenile_btn, "disabled", False))
+
+    def _listeyi_goster(self, veriler):
+        self.yenile_btn.disabled = False
+        self.durum_etiketi.text = f"{len(veriler)} hisse."
+        self.sonuc_kutusu.clear_widgets()
+
+        for v in veriler:
+            kart = TiklanabilirKart()
+            sembol = v["sembol"]
+
+            if "hata" in v:
+                kart.add_widget(baslik_etiketi(sembol, 15))
+                kart.add_widget(govde_etiketi(f"Veri alınamadı: {v['hata']}", renk=RENK_OLUMSUZ))
+            else:
+                degisim = v.get("degisim_yuzde")
+                degisim_metni = f"{'+' if (degisim or 0) >= 0 else ''}{degisim:.2f}%" if degisim is not None else "-"
+                renk = RENK_OLUMLU if (degisim or 0) >= 0 else RENK_OLUMSUZ
+
+                kart.add_widget(baslik_etiketi(f"{sembol}  ·  {v['fiyat']:.2f} TL  ({degisim_metni})", 15))
+                genel_skor = v.get("genel_skor")
+                skor_metni = f"{genel_skor:.0f}/100" if genel_skor is not None else "-"
+                kart.add_widget(govde_etiketi(
+                    f"RSI: {v.get('rsi', '-')}   Teknik: {v.get('teknik_skor', '-')}   "
+                    f"Temel: {v.get('temel_skor', '-')}   Genel: {skor_metni}",
+                    renk=renk,
+                ))
+
+            kart.bind(on_release=lambda inst, s=sembol: self._hisseye_git(s))
+
+            cikar_btn = Button(text="Kaldır", size_hint_y=None, height=dp(38),
+                                background_color=(0.30, 0.12, 0.12, 1))
+            cikar_btn.bind(on_release=lambda inst, s=sembol: self._cikar(s))
+            kart.add_widget(cikar_btn)
+
+            self.sonuc_kutusu.add_widget(kart)
+
+    def _hisseye_git(self, sembol):
+        detay_ekrani = self.manager.get_screen("hisse_detay")
+        detay_ekrani.hisseyi_yukle(sembol)
+        self.manager.transition = SlideTransition(duration=0.15)
+        self.manager.current = "hisse_detay"
+
+    def _cikar(self, sembol):
+        watchlist_cikar(sembol)
+        self._yenile()
+
+    def _sembol_ekleme_popup_ac(self):
+        icerik = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+        icerik.add_widget(govde_etiketi("Sembol gir (örn. THYAO) — .IS otomatik eklenir."))
+        girisi = TextInput(multiline=False, size_hint_y=None, height=dp(42))
+        icerik.add_widget(girisi)
+        ekle_btn = Button(text="Ekle", size_hint_y=None, height=dp(45), background_color=RENK_VURGU)
+        icerik.add_widget(ekle_btn)
+        pop = Popup(title="Hisse Ekle", content=icerik, size_hint=(0.85, 0.45))
+
+        def _ekle(*args):
+            sembol = girisi.text.strip().upper()
+            if sembol:
+                if not sembol.endswith(".IS"):
+                    sembol += ".IS"
+                watchlist_ekle(sembol)
+                pop.dismiss()
+                self._yenile()
+
+        ekle_btn.bind(on_release=_ekle)
+        pop.open()
+
+
+# ---------------------------------------------------------------------------
+# EKRAN: Alarmlar — plan madde 22
+# ---------------------------------------------------------------------------
+class AlarmlarEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        ust_satir.add_widget(baslik_etiketi("Alarmlar", 20))
+        self.yeni_btn = Button(text="+ Yeni", size_hint_x=0.3, background_color=RENK_VURGU)
+        self.yeni_btn.bind(on_release=lambda i: self._yeni_alarm_popup_ac())
+        ust_satir.add_widget(self.yeni_btn)
+        kok.add_widget(ust_satir)
+
+        self.kontrol_btn = Button(text="Şimdi Kontrol Et", size_hint_y=None, height=dp(44),
+                                   background_color=(0.10, 0.12, 0.17, 1))
+        self.kontrol_btn.bind(on_release=self._kontrol_et)
+        kok.add_widget(self.kontrol_btn)
+
+        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(22), color=RENK_NOTR)
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.liste_kutusu = BoxLayout(orientation="vertical", spacing=dp(6),
+                                       size_hint_y=None, padding=(0, dp(4)))
+        self.liste_kutusu.bind(minimum_height=self.liste_kutusu.setter("height"))
+        kaydirma.add_widget(self.liste_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+
+    def on_enter(self, *args):
+        self._listeyi_yenile()
+
+    def _listeyi_yenile(self, *args):
+        self.liste_kutusu.clear_widgets()
+        alarmlar = alarmlari_listele(sadece_aktif=False)
+
+        if not alarmlar:
+            self.liste_kutusu.add_widget(govde_etiketi(
+                "Henüz alarm yok. Sağ üstteki '+ Yeni' ile alarm oluşturabilirsin."
+            ))
+            return
+
+        for alarm in reversed(alarmlar):
+            kart = KartKutu()
+            tur_etiketi = _ALARM_TUR_ETIKETLERI.get(alarm["tur"], alarm["tur"])
+            deger_metni = f" {alarm['yon']} {alarm['deger']}" if alarm.get("deger") is not None else ""
+            durum = "Tetiklendi" if alarm["tetiklendi"] else ("Aktif" if alarm["aktif"] else "Pasif")
+            renk = RENK_NOTR if alarm["tetiklendi"] else (RENK_OLUMLU if alarm["aktif"] else RENK_OLUMSUZ)
+
+            kart.add_widget(baslik_etiketi(f"{alarm['sembol']} — {tur_etiketi}{deger_metni}", 15))
+            kart.add_widget(govde_etiketi(f"Durum: {durum}", renk=renk))
+
+            sil_btn = Button(text="Sil", size_hint_y=None, height=dp(38),
+                              background_color=(0.30, 0.12, 0.12, 1))
+            sil_btn.bind(on_release=lambda inst, aid=alarm["id"]: self._sil(aid))
+            kart.add_widget(sil_btn)
+
+            self.liste_kutusu.add_widget(kart)
+
+    def _sil(self, alarm_id):
+        alarm_sil(alarm_id)
+        self._listeyi_yenile()
+
+    def _kontrol_et(self, *args):
+        aktif_alarmlar = alarmlari_listele(sadece_aktif=True)
+        if not aktif_alarmlar:
+            uyari_goster("Kontrol edilecek alarm yok", "Aktif/tetiklenmemiş bir alarm bulunamadı.")
+            return
+
+        semboller = sorted({a["sembol"] for a in aktif_alarmlar})
+        self.kontrol_btn.disabled = True
+        self.durum_etiketi.text = "Kontrol ediliyor..."
+        threading.Thread(target=self._kontrol_calistir, args=(semboller,), daemon=True).start()
+
+    def _kontrol_calistir(self, semboller):
+        sembol_verileri = {}
+        for sembol in semboller:
+            try:
+                veri = analiz_et(sembol)
+                temel = temel_veri_getir(sembol)
+                skor = hisse_skoru_hesapla(veri, temel)
+                seviyeler = destek_direnc_bul(veri)
+                sembol_verileri[sembol] = {"veri": veri, "skor": skor, "seviyeler": seviyeler}
+            except Exception:
+                continue
+
+        try:
+            tetiklenenler = alarmlari_kontrol_et(sembol_verileri)
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Kontrol başarısız", m))
+            Clock.schedule_once(lambda dt: setattr(self.kontrol_btn, "disabled", False))
+            return
+
+        Clock.schedule_once(lambda dt: self._kontrol_bitti(tetiklenenler))
+
+    def _kontrol_bitti(self, tetiklenenler):
+        self.kontrol_btn.disabled = False
+        self.durum_etiketi.text = ""
+        self._listeyi_yenile()
+
+        if tetiklenenler:
+            mesaj = "\n".join(t["mesaj"] for t in tetiklenenler)
+            uyari_goster(f"{len(tetiklenenler)} alarm tetiklendi!", mesaj)
+        else:
+            uyari_goster("Sonuç", "Hiçbir alarm tetiklenmedi.")
+
+    def _yeni_alarm_popup_ac(self):
+        icerik = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(8))
+
+        icerik.add_widget(govde_etiketi("Sembol (örn. THYAO)"))
+        sembol_girisi = TextInput(multiline=False, size_hint_y=None, height=dp(40))
+        icerik.add_widget(sembol_girisi)
+
+        icerik.add_widget(govde_etiketi("Alarm Türü"))
+        tur_secici = Spinner(text="Fiyat", values=list(_ALARM_TUR_ETIKETLERI.values()),
+                              size_hint_y=None, height=dp(40))
+        icerik.add_widget(tur_secici)
+
+        yon_satiri = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        yon_satiri.add_widget(govde_etiketi("Yön:"))
+        yon_secici = Spinner(text=">", values=[">", "<"], size_hint_x=0.3)
+        yon_satiri.add_widget(yon_secici)
+        icerik.add_widget(yon_satiri)
+
+        icerik.add_widget(govde_etiketi("Eşik Değeri (MACD kesişim/destek-direnç türlerinde gerekmez)"))
+        deger_girisi = TextInput(multiline=False, input_filter="float", size_hint_y=None, height=dp(40))
+        icerik.add_widget(deger_girisi)
+
+        olustur_btn = Button(text="Oluştur", size_hint_y=None, height=dp(46), background_color=RENK_VURGU)
+        icerik.add_widget(olustur_btn)
+
+        pop = Popup(title="Yeni Alarm", content=icerik, size_hint=(0.9, 0.75))
+
+        def _olustur(*args):
+            sembol = sembol_girisi.text.strip().upper()
+            if not sembol:
+                uyari_goster("Eksik bilgi", "Sembol girmen gerekiyor.")
+                return
+            if not sembol.endswith(".IS"):
+                sembol += ".IS"
+
+            tur = _ALARM_TUR_TERS.get(tur_secici.text)
+            deger = None
+            if tur in _ESIK_GEREKTIREN_TURLER:
+                try:
+                    deger = float(deger_girisi.text)
+                except ValueError:
+                    uyari_goster("Eksik bilgi", "Bu alarm türü için bir eşik değeri girmen gerekiyor.")
+                    return
+
+            alarm_olustur(sembol, tur, deger=deger, yon=yon_secici.text)
+            pop.dismiss()
+            self._listeyi_yenile()
+
+        olustur_btn.bind(on_release=_olustur)
+        pop.open()
 
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -660,7 +960,10 @@ class AltMenu(BoxLayout):
     def __init__(self, sm, **kwargs):
         super().__init__(orientation="horizontal", size_hint_y=None, height=dp(56), **kwargs)
         self.sm = sm
-        sekmeler = [("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Ayarlar", "ayarlar")]
+        sekmeler = [
+            ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
+            ("Alarmlar", "alarmlar"), ("Ayarlar", "ayarlar"),
+        ]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
                          color=RENK_METIN)
@@ -679,6 +982,8 @@ class AnaLayout(BoxLayout):
         sm.add_widget(PiyasaEkrani(name="piyasa"))
         sm.add_widget(HisselerEkrani(name="hisseler"))
         sm.add_widget(HisseDetayEkrani(name="hisse_detay"))
+        sm.add_widget(WatchlistEkrani(name="watchlist"))
+        sm.add_widget(AlarmlarEkrani(name="alarmlar"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
