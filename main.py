@@ -56,6 +56,8 @@ try:
     from watchlist import watchlist_getir, watchlist_ekle, watchlist_cikar, watchlist_verilerini_getir  # noqa: E402
     from alarm_sistemi import alarm_olustur, alarm_sil, alarmlari_listele, alarmlari_kontrol_et  # noqa: E402
     from sektor_analizi import sektor_performansi_hesapla  # noqa: E402
+    from backtest import backtest_calistir  # noqa: E402
+    from strateji_olusturucu import KULLANILABILIR_GOSTERGELER, KULLANILABILIR_OPERATORLER  # noqa: E402
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -992,6 +994,168 @@ class SektorEkrani(Screen):
                 f"En iyi: {veri.get('en_iyi_hisse', '-')}   En kötü: {veri.get('en_kotu_hisse', '-')}"
             ))
             self.sonuc_kutusu.add_widget(kart)
+# ---------------------------------------------------------------------------
+# EKRAN: Strateji — plan madde 20, 21
+# ---------------------------------------------------------------------------
+class StratejiEkrani(Screen):
+    _PERIYOT_SECENEKLERI = ["3mo", "6mo", "1y", "2y"]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        kok.add_widget(baslik_etiketi("Strateji / Backtest", 20))
+
+        kaydirma = ScrollView()
+        icerik = BoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None, padding=(0, dp(4)))
+        icerik.bind(minimum_height=icerik.setter("height"))
+
+        icerik.add_widget(govde_etiketi("Sembol (örn. THYAO)"))
+        self.sembol_girisi = TextInput(text="THYAO", multiline=False, size_hint_y=None, height=dp(40))
+        icerik.add_widget(self.sembol_girisi)
+
+        icerik.add_widget(govde_etiketi("Test Periyodu"))
+        self.periyot_secici = Spinner(text="1y", values=self._PERIYOT_SECENEKLERI,
+                                       size_hint_y=None, height=dp(40))
+        icerik.add_widget(self.periyot_secici)
+
+        icerik.add_widget(baslik_etiketi("AL Koşulları (VE mantığı)", 15))
+        self.al_satirlari = [self._kosul_satiri_olustur(icerik) for _ in range(3)]
+
+        icerik.add_widget(baslik_etiketi("SAT Koşulları (opsiyonel)", 15))
+        self.sat_satirlari = [self._kosul_satiri_olustur(icerik) for _ in range(2)]
+
+        stop_satiri = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        stop_satiri.add_widget(govde_etiketi("Stop-Loss %"))
+        self.stop_girisi = TextInput(multiline=False, input_filter="float", size_hint_x=0.4)
+        stop_satiri.add_widget(self.stop_girisi)
+        stop_satiri.add_widget(govde_etiketi("Kâr Al %"))
+        self.kar_al_girisi = TextInput(multiline=False, input_filter="float", size_hint_x=0.4)
+        stop_satiri.add_widget(self.kar_al_girisi)
+        icerik.add_widget(stop_satiri)
+
+        self.calistir_btn = Button(text="Backtest Çalıştır", size_hint_y=None, height=dp(46),
+                                    background_color=RENK_VURGU)
+        self.calistir_btn.bind(on_release=self._backtest_calistir)
+        icerik.add_widget(self.calistir_btn)
+
+        self.durum_etiketi = govde_etiketi("", renk=RENK_NOTR)
+        icerik.add_widget(self.durum_etiketi)
+
+        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None)
+        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
+        icerik.add_widget(self.sonuc_kutusu)
+
+        kaydirma.add_widget(icerik)
+        kok.add_widget(kaydirma)
+        self.add_widget(kok)
+
+    def _kosul_satiri_olustur(self, ust_kutu):
+        satir = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
+        gosterge = Spinner(text="RSI", values=KULLANILABILIR_GOSTERGELER, size_hint_x=0.4)
+        operator = Spinner(text="<", values=KULLANILABILIR_OPERATORLER, size_hint_x=0.2)
+        deger = TextInput(multiline=False, input_filter="float", size_hint_x=0.4,
+                           hint_text="değer (boş=yok say)")
+        satir.add_widget(gosterge)
+        satir.add_widget(operator)
+        satir.add_widget(deger)
+        ust_kutu.add_widget(satir)
+        return {"gosterge": gosterge, "operator": operator, "deger": deger}
+
+    def _kosullari_topla(self, satirlar):
+        kosullar = []
+        for s in satirlar:
+            metin = s["deger"].text.strip()
+            if not metin:
+                continue
+            try:
+                deger = float(metin)
+            except ValueError:
+                continue
+            kosullar.append({
+                "gosterge": s["gosterge"].text,
+                "operator": s["operator"].text,
+                "deger": deger,
+            })
+        return kosullar
+
+    def _backtest_calistir(self, *args):
+        sembol = self.sembol_girisi.text.strip().upper()
+        if not sembol:
+            uyari_goster("Eksik bilgi", "Sembol girmen gerekiyor.")
+            return
+        if not sembol.endswith(".IS"):
+            sembol += ".IS"
+
+        al_kosullari = self._kosullari_topla(self.al_satirlari)
+        if not al_kosullari:
+            uyari_goster("Eksik bilgi", "En az bir AL koşulu girmen gerekiyor (değer alanını doldur).")
+            return
+        sat_kosullari = self._kosullari_topla(self.sat_satirlari)
+
+        try:
+            stop_yuzdesi = float(self.stop_girisi.text) if self.stop_girisi.text.strip() else None
+        except ValueError:
+            stop_yuzdesi = None
+        try:
+            kar_al_yuzdesi = float(self.kar_al_girisi.text) if self.kar_al_girisi.text.strip() else None
+        except ValueError:
+            kar_al_yuzdesi = None
+
+        periyot = self.periyot_secici.text
+
+        self.calistir_btn.disabled = True
+        self.durum_etiketi.text = "Backtest çalıştırılıyor..."
+        self.sonuc_kutusu.clear_widgets()
+
+        threading.Thread(
+            target=self._calistir, daemon=True,
+            args=(sembol, al_kosullari, sat_kosullari, stop_yuzdesi, kar_al_yuzdesi, periyot),
+        ).start()
+
+    def _calistir(self, sembol, al_kosullari, sat_kosullari, stop_yuzdesi, kar_al_yuzdesi, periyot):
+        try:
+            sonuc = backtest_calistir(
+                sembol, al_kosullari, sat_kosullari or None,
+                stop_yuzdesi=stop_yuzdesi, kar_al_yuzdesi=kar_al_yuzdesi, periyot=periyot,
+            )
+            Clock.schedule_once(lambda dt: self._sonucu_goster(sonuc))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Backtest başarısız", m))
+            Clock.schedule_once(lambda dt: setattr(self.calistir_btn, "disabled", False))
+
+    def _sonucu_goster(self, sonuc):
+        self.calistir_btn.disabled = False
+        self.durum_etiketi.text = f"{sonuc['sembol']} — {sonuc['periyot']} test edildi."
+
+        ozet_kart = KartKutu()
+        toplam = sonuc.get("toplam_getiri_yuzde")
+        renk = RENK_OLUMLU if (toplam or 0) >= 0 else RENK_OLUMSUZ
+        ozet_kart.add_widget(baslik_etiketi(f"Toplam Getiri: {toplam}%", 16))
+        ozet_kart.add_widget(govde_etiketi(f"BIST 100 getirisi (aynı dönem): {sonuc.get('bist100_getiri_yuzde')}%",
+                                            renk=renk))
+        ozet_kart.add_widget(govde_etiketi(f"İşlem sayısı: {sonuc.get('islem_sayisi')}"))
+        ozet_kart.add_widget(govde_etiketi(f"Kazançlı işlem yüzdesi: {sonuc.get('kazancli_islem_yuzdesi')}%"))
+        ozet_kart.add_widget(govde_etiketi(f"Ortalama kazanç: {sonuc.get('ortalama_kazanc_yuzde')}%",
+                                            renk=RENK_OLUMLU))
+        ozet_kart.add_widget(govde_etiketi(f"Ortalama zarar: {sonuc.get('ortalama_zarar_yuzde')}%",
+                                            renk=RENK_OLUMSUZ))
+        ozet_kart.add_widget(govde_etiketi(f"Maksimum düşüş: {sonuc.get('maksimum_dusus_yuzde')}%",
+                                            renk=RENK_OLUMSUZ))
+        self.sonuc_kutusu.add_widget(ozet_kart)
+
+        islemler = sonuc.get("islemler", [])
+        if islemler:
+            islem_kart = KartKutu()
+            islem_kart.add_widget(baslik_etiketi(f"İşlemler (son {min(10, len(islemler))})", 15))
+            for t in islemler[-10:]:
+                renk_i = RENK_OLUMLU if t["getiri_yuzde"] >= 0 else RENK_OLUMSUZ
+                islem_kart.add_widget(govde_etiketi(
+                    f"{t['giris_tarihi']} → {t['cikis_tarihi']}: {t['getiri_yuzde']}%", renk=renk_i
+                ))
+            self.sonuc_kutusu.add_widget(islem_kart)
+        else:
+            self.sonuc_kutusu.add_widget(govde_etiketi("Bu dönemde hiç işlem tetiklenmedi."))
 
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -1050,7 +1214,8 @@ class AltMenu(BoxLayout):
         self.sm = sm
         sekmeler = [
             ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
-            ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Ayarlar", "ayarlar"),
+            ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Strateji", "strateji"),
+            ("Ayarlar", "ayarlar"),
         ]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
@@ -1073,6 +1238,7 @@ class AnaLayout(BoxLayout):
         sm.add_widget(WatchlistEkrani(name="watchlist"))
         sm.add_widget(AlarmlarEkrani(name="alarmlar"))
         sm.add_widget(SektorEkrani(name="sektor"))
+        sm.add_widget(StratejiEkrani(name="strateji"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
