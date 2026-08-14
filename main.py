@@ -564,24 +564,28 @@ class HisseDetayEkrani(Screen):
             Clock.schedule_once(lambda dt, m=mesaj: self._ai_yorum_hata(m))
 
     def _ai_karti_yeniden_olustur(self, metin):
-        """AI Yorum kartını sıfırdan yeniden kurar. Var olan bir Label'ın
-        metnini değiştirip yüksekliğini otomatik zincirin güncellemesini
-        beklemek yerine, doğru boyutta YENİ bir Label oluşturup kartı
-        baştan dolduruyoruz — bu, gecikmeli/güncellenmeyen yükseklik
-        sorununu kesin olarak çözer."""
+        """AI Yorum kartını sıfırdan yeniden kurar. Kivy'de bir Label'ın
+        gerçek metin yüksekliği (texture_size), widget ekrana yerleşip
+        GERÇEK genişliğini alana kadar doğru hesaplanmıyor — bu yüzden
+        widget'ı önce normal şekilde ekliyoruz, sonra BİR KARE (frame)
+        bekleyip, artık gerçek genişliği belli olduğunda yüksekliği
+        elle kesinleştiriyoruz."""
         kart = self.ai_kart
         kart.clear_widgets()
         kart.add_widget(baslik_etiketi("AI Yorum", 16))
 
-        genislik = (kart.width - dp(24)) if kart.width > dp(24) else (Window.width - dp(48))
         etiket = govde_etiketi(metin)
-        etiket.text_size = (genislik, None)
-        etiket.texture_update()
-        etiket.height = etiket.texture_size[1]
         kart.add_widget(etiket)
         self.ai_sonuc_etiketi = etiket
 
         kart.add_widget(self.ai_btn)
+
+        Clock.schedule_once(lambda dt: self._ai_etiketini_kesin_boyutlandir(etiket), 0)
+
+    def _ai_etiketini_kesin_boyutlandir(self, etiket):
+        etiket.text_size = (etiket.width, None)
+        etiket.texture_update()
+        etiket.height = etiket.texture_size[1]
 
     def _ai_yorum_goster(self, yorum):
         self.ai_btn.disabled = False
