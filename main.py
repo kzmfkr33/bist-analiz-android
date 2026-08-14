@@ -55,6 +55,7 @@ try:
     from ai_yorum import hisse_yorumu_uret, AIYorumHatasi  # noqa: E402
     from watchlist import watchlist_getir, watchlist_ekle, watchlist_cikar, watchlist_verilerini_getir  # noqa: E402
     from alarm_sistemi import alarm_olustur, alarm_sil, alarmlari_listele, alarmlari_kontrol_et  # noqa: E402
+    from sektor_analizi import sektor_performansi_hesapla  # noqa: E402
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -904,6 +905,93 @@ class AlarmlarEkrani(Screen):
 
         olustur_btn.bind(on_release=_olustur)
         pop.open()
+# ---------------------------------------------------------------------------
+# EKRAN: Sektör Analizi — plan madde 12
+# ---------------------------------------------------------------------------
+class SektorEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
+        ust_satir.add_widget(baslik_etiketi("Sektör", 20))
+        self.tara_btn = Button(text="Tara", size_hint_x=0.3, background_color=RENK_VURGU)
+        self.tara_btn.bind(on_release=self._tarama_baslat)
+        ust_satir.add_widget(self.tara_btn)
+        kok.add_widget(ust_satir)
+
+        self.ilerleme = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(8))
+        kok.add_widget(self.ilerleme)
+
+        self.durum_etiketi = Label(
+            text="Sektör performansını görmek için 'Tara'ya bas.",
+            size_hint_y=None, height=dp(22), color=RENK_NOTR,
+        )
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(8),
+                                       size_hint_y=None, padding=(0, dp(4)))
+        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
+        kaydirma.add_widget(self.sonuc_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+        self._son_sonuclar = None
+
+    def _tarama_baslat(self, *args):
+        self.tara_btn.disabled = True
+        self.ilerleme.value = 0
+        self.durum_etiketi.text = "Hisseler taranıyor..."
+        self.sonuc_kutusu.clear_widgets()
+        threading.Thread(target=self._tara, daemon=True).start()
+
+    def _ilerleme_callback(self, tamamlanan, toplam, sembol):
+        yuzde = (tamamlanan / toplam) * 100 if toplam else 0
+        Clock.schedule_once(lambda dt: self._ilerleme_guncelle(yuzde, tamamlanan, toplam))
+
+    def _ilerleme_guncelle(self, yuzde, tamamlanan, toplam):
+        self.ilerleme.value = yuzde
+        self.durum_etiketi.text = f"{tamamlanan}/{toplam} tarandı..."
+
+    def _tara(self):
+        try:
+            sonuclar = tum_hisseleri_tara(
+                temel_dahil_et=False, max_paralel_islem=10, ilerleme_callback=self._ilerleme_callback,
+            )
+            sektorler = sektor_performansi_hesapla(sonuclar)
+            Clock.schedule_once(lambda dt: self._sonucu_goster(sektorler))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Tarama başarısız", m))
+            Clock.schedule_once(lambda dt: setattr(self.tara_btn, "disabled", False))
+
+    def _sonucu_goster(self, sektorler):
+        self.tara_btn.disabled = False
+        self.durum_etiketi.text = f"{len(sektorler)} sektör (haftalık performansa göre sıralı)."
+        self.sonuc_kutusu.clear_widgets()
+
+        for sektor, veri in sektorler.items():
+            kart = KartKutu()
+            ort_1h = veri.get("ortalama_degisim_1h")
+            renk = RENK_OLUMLU if (ort_1h or 0) >= 0 else RENK_OLUMSUZ
+            isaret = "+" if (ort_1h or 0) >= 0 else ""
+
+            kart.add_widget(baslik_etiketi(
+                f"{sektor}  ({veri['hisse_sayisi']} hisse)", 16
+            ))
+            kart.add_widget(govde_etiketi(
+                f"Haftalık ort. değişim: {isaret}{ort_1h}%" if ort_1h is not None else "Haftalık değişim: veri yok",
+                renk=renk,
+            ))
+            kart.add_widget(govde_etiketi(
+                f"Trend Score (ADX ort.): {veri.get('trend_score', '-')}   "
+                f"Hacim Score (RVOL ort.): {veri.get('hacim_score', '-')}"
+            ))
+            kart.add_widget(govde_etiketi(
+                f"En iyi: {veri.get('en_iyi_hisse', '-')}   En kötü: {veri.get('en_kotu_hisse', '-')}"
+            ))
+            self.sonuc_kutusu.add_widget(kart)
 
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -962,7 +1050,7 @@ class AltMenu(BoxLayout):
         self.sm = sm
         sekmeler = [
             ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
-            ("Alarmlar", "alarmlar"), ("Ayarlar", "ayarlar"),
+            ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Ayarlar", "ayarlar"),
         ]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
@@ -984,6 +1072,7 @@ class AnaLayout(BoxLayout):
         sm.add_widget(HisseDetayEkrani(name="hisse_detay"))
         sm.add_widget(WatchlistEkrani(name="watchlist"))
         sm.add_widget(AlarmlarEkrani(name="alarmlar"))
+        sm.add_widget(SektorEkrani(name="sektor"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
