@@ -130,10 +130,13 @@ class KartKutu(BoxLayout):
 
 
 class TiklanabilirKart(ButtonBehavior, KartKutu):
-    """KartKutu ile aynı görünümde ama dokunulabilir (Hisseler listesindeki satırlar için)."""
+    """KartKutu ile aynı görünümde ama dokunulabilir."""
     pass
 
 
+# ---------------------------------------------------------------------------
+# EKRAN: Piyasa (Ana Ekran)
+# ---------------------------------------------------------------------------
 class PiyasaEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -284,6 +287,9 @@ class PiyasaEkrani(Screen):
         uyari_goster("Veri alınamadı", mesaj)
 
 
+# ---------------------------------------------------------------------------
+# EKRAN: Hisseler (Screener + Sıralamalar)
+# ---------------------------------------------------------------------------
 class HisselerEkrani(Screen):
     _SIRALAMA_SECENEKLERI = [
         "Genel Puan", "En Ucuz (F/K)", "En Hızlı Yükselen", "Hacmi En Çok Artan",
@@ -418,6 +424,9 @@ class HisselerEkrani(Screen):
         self.manager.current = "hisse_detay"
 
 
+# ---------------------------------------------------------------------------
+# EKRAN: Hisse Detay
+# ---------------------------------------------------------------------------
 class HisseDetayEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -478,6 +487,7 @@ class HisseDetayEkrani(Screen):
         except Exception as hata:
             mesaj = f"Veri alınamadı: {hata}"
             Clock.schedule_once(lambda dt, m=mesaj: self._hata_goster(m))
+
     def _goster(self, paket):
         self.durum_etiketi.text = ""
         veri = paket["veri"]
@@ -549,6 +559,7 @@ class HisseDetayEkrani(Screen):
         ai_kart.add_widget(self.ai_btn)
         self.ai_kart = ai_kart
         self.icerik_kutusu.add_widget(ai_kart)
+
     def _ai_yorum_al(self, *args):
         if self._son_ai_yorum:
             self._ai_yorum_popup_ac(self._son_ai_yorum)
@@ -564,9 +575,6 @@ class HisseDetayEkrani(Screen):
         threading.Thread(target=self._ai_yorum_getir, args=(api_key,), daemon=True).start()
 
     def _ai_yorum_popup_ac(self, metin):
-        """AI yorumunu ayrı, kendi içinde kaydırılabilir bir pencerede gösterir —
-        kart içine gömülü metinlerde yaşanan yükseklik hesaplama sorunlarını
-        tamamen ortadan kaldırır."""
         icerik = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
 
         kaydirma = ScrollView()
@@ -609,6 +617,7 @@ class HisseDetayEkrani(Screen):
         self.durum_etiketi.text = ""
         uyari_goster("Veri alınamadı", mesaj)
 
+
 _ALARM_TUR_ETIKETLERI = {
     "fiyat": "Fiyat",
     "rsi": "RSI",
@@ -625,7 +634,7 @@ _ESIK_GEREKTIREN_TURLER = {"fiyat", "rsi", "hacim", "teknik_skor", "genel_skor"}
 
 
 # ---------------------------------------------------------------------------
-# EKRAN: Watchlist — plan madde 23
+# EKRAN: Watchlist
 # ---------------------------------------------------------------------------
 class WatchlistEkrani(Screen):
     def __init__(self, **kwargs):
@@ -748,7 +757,7 @@ class WatchlistEkrani(Screen):
 
 
 # ---------------------------------------------------------------------------
-# EKRAN: Alarmlar — plan madde 22
+# EKRAN: Alarmlar
 # ---------------------------------------------------------------------------
 class AlarmlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -907,8 +916,10 @@ class AlarmlarEkrani(Screen):
 
         olustur_btn.bind(on_release=_olustur)
         pop.open()
+
+
 # ---------------------------------------------------------------------------
-# EKRAN: Sektör Analizi — plan madde 12
+# EKRAN: Sektör Analizi
 # ---------------------------------------------------------------------------
 class SektorEkrani(Screen):
     def __init__(self, **kwargs):
@@ -994,8 +1005,10 @@ class SektorEkrani(Screen):
                 f"En iyi: {veri.get('en_iyi_hisse', '-')}   En kötü: {veri.get('en_kotu_hisse', '-')}"
             ))
             self.sonuc_kutusu.add_widget(kart)
+
+
 # ---------------------------------------------------------------------------
-# EKRAN: Strateji — plan madde 20, 21
+# EKRAN: Strateji / Backtest
 # ---------------------------------------------------------------------------
 class StratejiEkrani(Screen):
     _PERIYOT_SECENEKLERI = ["3mo", "6mo", "1y", "2y"]
@@ -1157,6 +1170,10 @@ class StratejiEkrani(Screen):
         else:
             self.sonuc_kutusu.add_widget(govde_etiketi("Bu dönemde hiç işlem tetiklenmedi."))
 
+
+# ---------------------------------------------------------------------------
+# EKRAN: Ayarlar
+# ---------------------------------------------------------------------------
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1208,6 +1225,9 @@ class AyarlarEkrani(Screen):
         self.durum_etiketi.text = "Kaydedildi."
 
 
+# ---------------------------------------------------------------------------
+# Alt gezinme çubuğu + ana uygulama
+# ---------------------------------------------------------------------------
 class AltMenu(BoxLayout):
     def __init__(self, sm, **kwargs):
         super().__init__(orientation="horizontal", size_hint_y=None, height=dp(56), **kwargs)
