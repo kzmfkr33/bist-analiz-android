@@ -123,3 +123,57 @@ def composite_skor_hesapla(veri):
         "agirliklar": {k: round(v, 3) for k, v in agirliklar.items()},
         "nedenler": tum_nedenler,
     }
+# ---------------------------------------------------------------------------
+# Otomatik Tarama — tüm BIST evrenini Composite Signal Engine ile puanlar
+# ---------------------------------------------------------------------------
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from veri_katmani import fiyat_verisi_getir
+from bist_evreni import hisse_listesi
+from log_ayarlari import logger_al
+
+log = logger_al(__name__)
+
+
+def _tek_hisse_composite_hesapla(sembol, periyot="1y"):
+    try:
+        veri = fiyat_verisi_getir(sembol, periyot=periyot)
+        sonuc = composite_skor_hesapla(veri)
+        sonuc["sembol"] = sembol
+        return sonuc
+    except Exception as hata:
+        log.warning(f"{sembol} composite skor hesaplanamadı: {hata}")
+        return None
+
+
+def composite_taramasi_yap(semboller=None, periyot="1y", max_paralel_islem=6, ilerleme_callback=None):
+    """
+    Verilen (veya bist_evreni'ndeki tüm) hisseleri paralel olarak Composite
+    Signal Engine ile puanlar. Ağır bir işlemdir (her hisse için 1 yıllık
+    veri + 5 motor hesaplanır) — yüzlerce hisse için birkaç dakika sürebilir.
+    """
+    if semboller is None:
+        semboller = hisse_listesi()
+
+    sonuclar = []
+    toplam = len(semboller)
+    tamamlanan = 0
+
+    with ThreadPoolExecutor(max_workers=max_paralel_islem) as havuz:
+        gorev_haritasi = {
+            havuz.submit(_tek_hisse_composite_hesapla, s, periyot): s for s in semboller
+        }
+        for gorev in as_completed(gorev_haritasi):
+            sembol = gorev_haritasi[gorev]
+            tamamlanan += 1
+            sonuc = gorev.result()
+            if sonuc is not None:
+                sonuclar.append(sonuc)
+            if ilerleme_callback:
+                ilerleme_callback(tamamlanan, toplam, sembol)
+
+    return sonuclar
+
+
+def en_yuksek_composite_20(sonuclar, adet=10):
+    """Composite Score'a göre en yüksek puanlı N hisseyi döner (varsayılan 10)."""
+    return sorted(sonuclar, key=lambda s: s["composite_score"], reverse=True)[:adet]
