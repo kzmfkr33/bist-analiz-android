@@ -1160,6 +1160,12 @@ class StratejiEkrani(Screen):
                                             renk=RENK_OLUMSUZ))
         ozet_kart.add_widget(govde_etiketi(f"Maksimum düşüş: {sonuc.get('maksimum_dusus_yuzde')}%",
                                             renk=RENK_OLUMSUZ))
+        pf = sonuc.get('profit_factor')
+        ozet_kart.add_widget(govde_etiketi(f"Profit Factor: {pf if pf is not None else 'Sonsuz (zarar yok)'}"))
+        ozet_kart.add_widget(govde_etiketi(f"Sharpe Ratio: {sonuc.get('sharpe_ratio')}"))
+        ozet_kart.add_widget(govde_etiketi(f"Sortino Ratio: {sonuc.get('sortino_ratio')}"))
+        ozet_kart.add_widget(govde_etiketi(f"Expectancy: {sonuc.get('expectancy_yuzde')}%"))
+        ozet_kart.add_widget(govde_etiketi(f"Maksimum ardışık zarar: {sonuc.get('maksimum_ardisik_zarar')} işlem"))
         self.sonuc_kutusu.add_widget(ozet_kart)
 
         islemler = sonuc.get("islemler", [])
