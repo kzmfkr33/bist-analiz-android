@@ -62,6 +62,7 @@ try:
     from sektor_analizi import sektor_performansi_hesapla  # noqa: E402
     from backtest import backtest_calistir  # noqa: E402
     from strateji_olusturucu import KULLANILABILIR_GOSTERGELER, KULLANILABILIR_OPERATORLER  # noqa: E402
+    from csm_skor import composite_skor_hesapla  # noqa: E402
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -1321,6 +1322,111 @@ class GrafikEkrani(Screen):
         self.grafik_widget.veriyi_ayarla(veri, tur=tur)
         self.ust_fiyat_etiketi.text = f"Yüksek: {veri['High'].max():.2f} TL"
         self.alt_fiyat_etiketi.text = f"Düşük: {veri['Low'].min():.2f} TL   Son: {veri['Close'].iloc[-1]:.2f} TL"
+# ---------------------------------------------------------------------------
+# EKRAN: Composite Sinyal — BIST Composite Signal Engine
+# ---------------------------------------------------------------------------
+class CompositeSinyalEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
+        self.sembol_girisi = TextInput(text="THYAO", multiline=False, size_hint_x=0.5)
+        ust_satir.add_widget(self.sembol_girisi)
+        self.hesapla_btn = Button(text="Hesapla", size_hint_x=0.5, background_color=RENK_VURGU)
+        self.hesapla_btn.bind(on_release=self._hesapla)
+        ust_satir.add_widget(self.hesapla_btn)
+        kok.add_widget(ust_satir)
+
+        self.durum_etiketi = Label(text="Bir sembol girip 'Hesapla'ya bas.", size_hint_y=None,
+                                    height=dp(22), color=RENK_NOTR)
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.icerik_kutusu = BoxLayout(orientation="vertical", spacing=dp(10),
+                                        size_hint_y=None, padding=(0, dp(4)))
+        self.icerik_kutusu.bind(minimum_height=self.icerik_kutusu.setter("height"))
+        kaydirma.add_widget(self.icerik_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+
+    def _hesapla(self, *args):
+        sembol = self.sembol_girisi.text.strip().upper()
+        if not sembol:
+            uyari_goster("Eksik bilgi", "Sembol girmen gerekiyor.")
+            return
+        if not sembol.endswith(".IS"):
+            sembol += ".IS"
+
+        self.hesapla_btn.disabled = True
+        self.durum_etiketi.text = "Hesaplanıyor (1 yıllık veri, 5 motor)..."
+        self.icerik_kutusu.clear_widgets()
+        threading.Thread(target=self._calistir, args=(sembol,), daemon=True).start()
+
+    def _calistir(self, sembol):
+        try:
+            veri = fiyat_verisi_getir(sembol, periyot="1y")
+            sonuc = composite_skor_hesapla(veri)
+            Clock.schedule_once(lambda dt: self._goster(sembol, sonuc))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Hesaplanamadı", m))
+            Clock.schedule_once(lambda dt: setattr(self.hesapla_btn, "disabled", False))
+
+    def _goster(self, sembol, sonuc):
+        self.hesapla_btn.disabled = False
+        self.durum_etiketi.text = f"{sembol} — Composite Signal Engine"
+
+        skor = sonuc["composite_score"]
+        if skor >= 70:
+            renk = RENK_OLUMLU
+        elif skor <= 39:
+            renk = RENK_OLUMSUZ
+        else:
+            renk = RENK_NOTR
+
+        ana_kart = KartKutu()
+        ana_kart.add_widget(baslik_etiketi(f"Composite Score: {skor}/100", 18))
+        ana_kart.add_widget(govde_etiketi(f"Sınıf: {sonuc['sinyal_sinifi']}", renk=renk))
+        ana_kart.add_widget(govde_etiketi(
+            f"Sinyal: {sonuc['sinyal']}   Güven: {sonuc['guven_seviyesi']}", renk=renk
+        ))
+        ana_kart.add_widget(govde_etiketi(f"Market Regime: {sonuc['market_regime']}"))
+        if sonuc.get("aciklama_notu"):
+            ana_kart.add_widget(govde_etiketi(sonuc["aciklama_notu"], renk=RENK_NOTR))
+        self.icerik_kutusu.add_widget(ana_kart)
+
+        motor_kart = KartKutu()
+        motor_kart.add_widget(baslik_etiketi("Motor Puanları", 16))
+        etiketler = {
+            "trend": "Trend Engine", "momentum": "Momentum Engine",
+            "market_regime": "Market Regime", "volume": "Volume Analysis",
+            "breakout": "Squeeze/Breakout Engine",
+        }
+        for anahtar, isim in etiketler.items():
+            p = sonuc["motor_puanlari"][anahtar]
+            agirlik = sonuc["agirliklar"][anahtar]
+            renk_m = RENK_OLUMLU if p >= 60 else (RENK_OLUMSUZ if p <= 40 else RENK_NOTR)
+            motor_kart.add_widget(govde_etiketi(
+                f"{isim}: {p:.0f}/100  (ağırlık: %{agirlik * 100:.0f})", renk=renk_m
+            ))
+        self.icerik_kutusu.add_widget(motor_kart)
+
+        for baslik, nedenler in sonuc["nedenler"].items():
+            neden_kart = KartKutu()
+            neden_kart.add_widget(baslik_etiketi(baslik, 14))
+            for n in nedenler:
+                neden_kart.add_widget(govde_etiketi(f"- {n}"))
+            self.icerik_kutusu.add_widget(neden_kart)
+
+        uyari_kart = KartKutu()
+        uyari_kart.add_widget(govde_etiketi(
+            "Bu bir teknik karar destek sistemidir; kârlılık veya gelecekteki "
+            "getiri garantisi değildir. Yatırım tavsiyesi değildir.",
+            renk=RENK_NOTR,
+        ))
+        self.icerik_kutusu.add_widget(uyari_kart)
 
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -1380,20 +1486,33 @@ class AltMenu(BoxLayout):
     def __init__(self, sm, **kwargs):
         super().__init__(orientation="horizontal", size_hint_y=None, height=dp(56), **kwargs)
         self.sm = sm
+        self._butonlar = {}
+
         sekmeler = [
             ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
             ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Strateji", "strateji"),
-            ("Grafik", "grafik"), ("Ayarlar", "ayarlar"),
+            ("Grafik", "grafik"), ("Composite", "composite"), ("Ayarlar", "ayarlar"),
         ]
+
+        kaydirma = ScrollView(do_scroll_x=True, do_scroll_y=False, bar_width=dp(3))
+        buton_kutusu = BoxLayout(orientation="horizontal", size_hint_x=None, spacing=dp(2))
+        buton_kutusu.bind(minimum_width=buton_kutusu.setter("width"))
+
         for etiket, ekran_adi in sekmeler:
-            btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
-                         color=RENK_METIN)
+            btn = Button(text=etiket, size_hint_x=None, width=dp(108),
+                         background_color=(0.10, 0.12, 0.17, 1), color=RENK_METIN)
             btn.bind(on_release=lambda inst, e=ekran_adi: self._gec(e))
-            self.add_widget(btn)
+            self._butonlar[ekran_adi] = btn
+            buton_kutusu.add_widget(btn)
+
+        kaydirma.add_widget(buton_kutusu)
+        self.add_widget(kaydirma)
 
     def _gec(self, ekran_adi):
         self.sm.transition = SlideTransition(duration=0.15)
         self.sm.current = ekran_adi
+        for adi, btn in self._butonlar.items():
+            btn.background_color = RENK_VURGU if adi == ekran_adi else (0.10, 0.12, 0.17, 1)
 
 
 class AnaLayout(BoxLayout):
@@ -1408,6 +1527,7 @@ class AnaLayout(BoxLayout):
         sm.add_widget(SektorEkrani(name="sektor"))
         sm.add_widget(StratejiEkrani(name="strateji"))
         sm.add_widget(GrafikEkrani(name="grafik"))
+        sm.add_widget(CompositeSinyalEkrani(name="composite"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
