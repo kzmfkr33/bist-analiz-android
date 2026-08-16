@@ -11,6 +11,8 @@ from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Line, Rectangle
 from kivy.uix.button import Button
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
@@ -38,7 +40,9 @@ os.chdir(_VERI_DIZINI)
 print("CHECKPOINT 4: chdir done", flush=True)
 
 try:
-    from veri_katmani import endeks_verisi_getir, doviz_altin_emtia_getir, temel_veri_getir  # noqa: E402
+    from veri_katmani import (  # noqa: E402
+        endeks_verisi_getir, doviz_altin_emtia_getir, temel_veri_getir, fiyat_verisi_getir,
+    )
     print("CHECKPOINT 5: veri_katmani imported", flush=True)
     from tarayici import (  # noqa: E402
         tum_hisseleri_tara, en_guclu_20, en_ucuz_20, en_hizli_yukselen_20,
@@ -1164,7 +1168,7 @@ class StratejiEkrani(Screen):
             for t in islemler[-10:]:
                 renk_i = RENK_OLUMLU if t["getiri_yuzde"] >= 0 else RENK_OLUMSUZ
                 islem_kart.add_widget(govde_etiketi(
-                    f"{t['giris_tarihi']} → {t['cikis_tarihi']}: {t['getiri_yuzde']}%", renk=renk_i
+                    f"{t['giris_tarihi']} -> {t['cikis_tarihi']}: {t['getiri_yuzde']}%", renk=renk_i
                 ))
             self.sonuc_kutusu.add_widget(islem_kart)
         else:
@@ -1174,6 +1178,150 @@ class StratejiEkrani(Screen):
 # ---------------------------------------------------------------------------
 # EKRAN: Ayarlar
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Mum/Çizgi Grafik Çizim Widget'ı — harici kütüphane gerektirmez
+# ---------------------------------------------------------------------------
+class MumGrafigiWidget(Widget):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.veri = None
+        self.tur = "mum"
+        self.bind(size=self._ciz, pos=self._ciz)
+
+    def veriyi_ayarla(self, veri, tur="mum"):
+        self.veri = veri
+        self.tur = tur
+        self._ciz()
+
+    def _ciz(self, *args):
+        self.canvas.clear()
+        if self.veri is None or len(self.veri) < 2:
+            return
+
+        veri = self.veri
+        n = len(veri)
+        genislik = self.width
+        yukseklik = self.height
+        sol = self.x
+        alt = self.y
+
+        yuksekler = veri["High"].values
+        dusukler = veri["Low"].values
+        acilislar = veri["Open"].values
+        kapanislar = veri["Close"].values
+
+        fiyat_max = float(veri["High"].max())
+        fiyat_min = float(veri["Low"].min())
+        fiyat_araligi = (fiyat_max - fiyat_min) or 1.0
+
+        def y_konumu(fiyat):
+            return alt + (fiyat - fiyat_min) / fiyat_araligi * yukseklik * 0.94 + yukseklik * 0.03
+
+        aralik = genislik / n
+
+        with self.canvas:
+            if self.tur == "cizgi":
+                Color(0.20, 0.55, 0.95, 1)
+                noktalar = []
+                for i in range(n):
+                    x = sol + i * aralik + aralik / 2
+                    y = y_konumu(kapanislar[i])
+                    noktalar.extend([x, y])
+                Line(points=noktalar, width=dp(1.5))
+            else:
+                govde_genislik = max(aralik * 0.6, dp(1))
+                for i in range(n):
+                    x_orta = sol + i * aralik + aralik / 2
+                    yukselis = kapanislar[i] >= acilislar[i]
+                    renk = (0.20, 0.75, 0.45, 1) if yukselis else (0.85, 0.30, 0.30, 1)
+                    Color(*renk)
+
+                    y_yuksek = y_konumu(yuksekler[i])
+                    y_dusuk = y_konumu(dusukler[i])
+                    Line(points=[x_orta, y_dusuk, x_orta, y_yuksek], width=dp(1))
+
+                    y_acilis = y_konumu(acilislar[i])
+                    y_kapanis = y_konumu(kapanislar[i])
+                    govde_alt = min(y_acilis, y_kapanis)
+                    govde_ust = max(y_acilis, y_kapanis)
+                    if govde_ust - govde_alt < dp(1):
+                        govde_ust = govde_alt + dp(1)
+                    Rectangle(pos=(x_orta - govde_genislik / 2, govde_alt),
+                              size=(govde_genislik, govde_ust - govde_alt))
+
+
+# ---------------------------------------------------------------------------
+# EKRAN: Grafik — plan madde 3
+# ---------------------------------------------------------------------------
+class GrafikEkrani(Screen):
+    _PERIYOT_SECENEKLERI = ["1mo", "3mo", "6mo", "1y", "2y"]
+    _TUR_SECENEKLERI = ["Mum", "Çizgi"]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+
+        ust_satir = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
+        self.sembol_girisi = TextInput(text="THYAO", multiline=False, size_hint_x=0.35)
+        ust_satir.add_widget(self.sembol_girisi)
+        self.periyot_secici = Spinner(text="3mo", values=self._PERIYOT_SECENEKLERI, size_hint_x=0.25)
+        ust_satir.add_widget(self.periyot_secici)
+        self.tur_secici = Spinner(text="Mum", values=self._TUR_SECENEKLERI, size_hint_x=0.2)
+        ust_satir.add_widget(self.tur_secici)
+        self.goster_btn = Button(text="Göster", size_hint_x=0.2, background_color=RENK_VURGU)
+        self.goster_btn.bind(on_release=self._grafigi_getir)
+        ust_satir.add_widget(self.goster_btn)
+        kok.add_widget(ust_satir)
+
+        self.durum_etiketi = Label(text="Bir sembol girip 'Göster'e bas.", size_hint_y=None,
+                                    height=dp(22), color=RENK_NOTR)
+        kok.add_widget(self.durum_etiketi)
+
+        self.ust_fiyat_etiketi = govde_etiketi("")
+        self.ust_fiyat_etiketi.size_hint_y = None
+        self.ust_fiyat_etiketi.height = dp(20)
+        kok.add_widget(self.ust_fiyat_etiketi)
+
+        self.grafik_widget = MumGrafigiWidget(size_hint_y=1)
+        kok.add_widget(self.grafik_widget)
+
+        self.alt_fiyat_etiketi = govde_etiketi("")
+        self.alt_fiyat_etiketi.size_hint_y = None
+        self.alt_fiyat_etiketi.height = dp(20)
+        kok.add_widget(self.alt_fiyat_etiketi)
+
+        self.add_widget(kok)
+
+    def _grafigi_getir(self, *args):
+        sembol = self.sembol_girisi.text.strip().upper()
+        if not sembol:
+            uyari_goster("Eksik bilgi", "Sembol girmen gerekiyor.")
+            return
+        if not sembol.endswith(".IS"):
+            sembol += ".IS"
+
+        self.goster_btn.disabled = True
+        self.durum_etiketi.text = "Yükleniyor..."
+        periyot = self.periyot_secici.text
+        threading.Thread(target=self._veriyi_getir, args=(sembol, periyot), daemon=True).start()
+
+    def _veriyi_getir(self, sembol, periyot):
+        try:
+            veri = fiyat_verisi_getir(sembol, periyot=periyot)
+            Clock.schedule_once(lambda dt: self._goster(sembol, veri))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Grafik alınamadı", m))
+            Clock.schedule_once(lambda dt: setattr(self.goster_btn, "disabled", False))
+
+    def _goster(self, sembol, veri):
+        self.goster_btn.disabled = False
+        self.durum_etiketi.text = f"{sembol} — {len(veri)} mum."
+        tur = "mum" if self.tur_secici.text == "Mum" else "cizgi"
+        self.grafik_widget.veriyi_ayarla(veri, tur=tur)
+        self.ust_fiyat_etiketi.text = f"Yüksek: {veri['High'].max():.2f} TL"
+        self.alt_fiyat_etiketi.text = f"Düşük: {veri['Low'].min():.2f} TL   Son: {veri['Close'].iloc[-1]:.2f} TL"
+
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1235,7 +1383,7 @@ class AltMenu(BoxLayout):
         sekmeler = [
             ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
             ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Strateji", "strateji"),
-            ("Ayarlar", "ayarlar"),
+            ("Grafik", "grafik"), ("Ayarlar", "ayarlar"),
         ]
         for etiket, ekran_adi in sekmeler:
             btn = Button(text=etiket, background_color=(0.10, 0.12, 0.17, 1),
@@ -1259,6 +1407,7 @@ class AnaLayout(BoxLayout):
         sm.add_widget(AlarmlarEkrani(name="alarmlar"))
         sm.add_widget(SektorEkrani(name="sektor"))
         sm.add_widget(StratejiEkrani(name="strateji"))
+        sm.add_widget(GrafikEkrani(name="grafik"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
 
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
