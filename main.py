@@ -62,7 +62,7 @@ try:
     from sektor_analizi import sektor_performansi_hesapla  # noqa: E402
     from backtest import backtest_calistir  # noqa: E402
     from strateji_olusturucu import KULLANILABILIR_GOSTERGELER, KULLANILABILIR_OPERATORLER  # noqa: E402
-    from csm_skor import composite_skor_hesapla  # noqa: E402
+    from csm_skor import composite_skor_hesapla, composite_taramasi_yap, en_yuksek_composite_20  # noqa: E402
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -1344,8 +1344,19 @@ class CompositeSinyalEkrani(Screen):
         ust_satir.add_widget(self.hesapla_btn)
         kok.add_widget(ust_satir)
 
-        self.durum_etiketi = Label(text="Bir sembol girip 'Hesapla'ya bas.", size_hint_y=None,
-                                    height=dp(22), color=RENK_NOTR)
+        self.top10_tara_btn = Button(
+            text="Top 10 Tara (tüm BIST — birkaç dakika sürebilir)",
+            size_hint_y=None, height=dp(44), background_color=(0.10, 0.12, 0.17, 1),
+        )
+        self.top10_tara_btn.bind(on_release=self._top10_taramasi_baslat)
+        kok.add_widget(self.top10_tara_btn)
+
+        self.top10_ilerleme = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(6))
+        kok.add_widget(self.top10_ilerleme)
+
+        self.durum_etiketi = Label(text="Bir sembol girip 'Hesapla'ya bas, ya da tüm BIST'i tara.",
+                                    size_hint_y=None, height=dp(22), color=RENK_NOTR)
+        self.durum_etiketi.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
         kok.add_widget(self.durum_etiketi)
 
         kaydirma = ScrollView()
@@ -1356,6 +1367,63 @@ class CompositeSinyalEkrani(Screen):
         kok.add_widget(kaydirma)
 
         self.add_widget(kok)
+
+    def _top10_taramasi_baslat(self, *args):
+        self.top10_tara_btn.disabled = True
+        self.hesapla_btn.disabled = True
+        self.top10_ilerleme.value = 0
+        self.durum_etiketi.text = "Tüm BIST taranıyor (Composite Signal Engine)..."
+        self.icerik_kutusu.clear_widgets()
+        threading.Thread(target=self._top10_taramasi_calistir, daemon=True).start()
+
+    def _top10_ilerleme_callback(self, tamamlanan, toplam, sembol):
+        yuzde = (tamamlanan / toplam) * 100 if toplam else 0
+        Clock.schedule_once(lambda dt: self._top10_ilerleme_guncelle(yuzde, tamamlanan, toplam, sembol))
+
+    def _top10_ilerleme_guncelle(self, yuzde, tamamlanan, toplam, sembol):
+        self.top10_ilerleme.value = yuzde
+        self.durum_etiketi.text = f"{tamamlanan}/{toplam} tarandı ({sembol})"
+
+    def _top10_taramasi_calistir(self):
+        try:
+            sonuclar = composite_taramasi_yap(
+                max_paralel_islem=6, ilerleme_callback=self._top10_ilerleme_callback,
+            )
+            en_iyiler = en_yuksek_composite_20(sonuclar, adet=10)
+            Clock.schedule_once(lambda dt: self._top10_goster(en_iyiler, len(sonuclar)))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Tarama başarısız", m))
+            Clock.schedule_once(lambda dt: setattr(self.top10_tara_btn, "disabled", False))
+            Clock.schedule_once(lambda dt: setattr(self.hesapla_btn, "disabled", False))
+
+    def _top10_goster(self, en_iyiler, toplam_taranan):
+        self.top10_tara_btn.disabled = False
+        self.hesapla_btn.disabled = False
+        self.durum_etiketi.text = f"{toplam_taranan} hisse tarandı. En yüksek 10 Composite Score:"
+        self.icerik_kutusu.clear_widgets()
+
+        if not en_iyiler:
+            self.icerik_kutusu.add_widget(govde_etiketi("Sonuç yok."))
+            return
+
+        for i, s in enumerate(en_iyiler, start=1):
+            kart = TiklanabilirKart()
+            kart.bind(on_release=lambda inst, sembol=s["sembol"]: self._top10_hisseye_git(sembol))
+
+            skor = s["composite_score"]
+            renk = RENK_OLUMLU if skor >= 70 else (RENK_OLUMSUZ if skor <= 39 else RENK_NOTR)
+
+            kart.add_widget(baslik_etiketi(f"{i}. {s['sembol']}  —  {skor}/100", 15))
+            kart.add_widget(govde_etiketi(
+                f"{s['sinyal_sinifi']}   ·   {s['sinyal']}   ·   Güven: {s['guven_seviyesi']}", renk=renk
+            ))
+            kart.add_widget(govde_etiketi(f"Market Regime: {s['market_regime']}"))
+            self.icerik_kutusu.add_widget(kart)
+
+    def _top10_hisseye_git(self, sembol):
+        self.sembol_girisi.text = sembol.replace(".IS", "")
+        self._hesapla()
 
     def _hesapla(self, *args):
         sembol = self.sembol_girisi.text.strip().upper()
