@@ -17,9 +17,8 @@ import json
 import os
 
 from gostergeler import ema_hesapla, macd_hesapla, rsi_hesapla, adx_hesapla, relative_volume_hesapla
-from veri_katmani import fiyat_verisi_getir
+from veri_katmani import fiyat_verisi_getir, dortsaatlik_veri_getir
 from log_ayarlari import logger_al
-
 log = logger_al(__name__)
 
 TAKIP_DOSYASI = "sinyal_takip_listesi.json"
@@ -85,7 +84,22 @@ def sinyal_hesapla(veri):
         "son_fiyat": float(veri["Close"].iloc[son]),
         "son_tarih": str(veri.index[son].date()),
     }
-
+def ust_zaman_dilimi_trend_kontrol(sembol):
+    """
+    4 saatlik veriye göre üst zaman dilimi trend yönünü belirler
+    (EMA20 vs EMA50). Yetersiz veri varsa None döner — bu durumda günlük
+    sinyale güvenilir (teyit uygulanamaz, ama engellenmez de).
+    """
+    try:
+        veri_4s = dortsaatlik_veri_getir(sembol)
+        if len(veri_4s) < 55:
+            return None
+        ema20 = ema_hesapla(veri_4s, 20)
+        ema50 = ema_hesapla(veri_4s, 50)
+        return "yukselis" if ema20.iloc[-1] > ema50.iloc[-1] else "dusus"
+    except Exception as hata:
+        log.warning(f"{sembol} üst zaman dilimi kontrolü başarısız: {hata}")
+        return None
 
 def _tum_kayitlari_oku():
     if not os.path.exists(TAKIP_DOSYASI):
@@ -148,13 +162,28 @@ def hisseyi_kontrol_et(sembol, periyot="1y"):
 
     if not kayit["pozisyonda"]:
         if sonuc["al_tetik"]:
-            kayit["pozisyonda"] = True
-            kayit["giris_fiyati"] = sonuc["son_fiyat"]
-            kayit["giris_tarihi"] = sonuc["son_tarih"]
-            yeni_sinyal = {
-                "tur": "AL", "fiyat": sonuc["son_fiyat"], "tarih": sonuc["son_tarih"],
-                "nedenler": sonuc["al_kosullari"],
-            }
+            ust_trend = ust_zaman_dilimi_trend_kontrol(sembol)
+
+            if ust_trend == "dusus":
+                # Günlükte AL var ama 4 saatlik trend ters yönlü — giriş
+                # ertelenir, pozisyon açılmaz. Bilgilendirme amaçlı not düşülür.
+                kayit["son_uyari"] = (
+                    f"Günlük AL sinyali oluştu ama 4 saatlik trend düşüş yönlü — "
+                    f"teyit bekleniyor ({sonuc['son_tarih']})."
+                )
+            else:
+                kayit["pozisyonda"] = True
+                kayit["giris_fiyati"] = sonuc["son_fiyat"]
+                kayit["giris_tarihi"] = sonuc["son_tarih"]
+                kayit["son_uyari"] = None
+                teyit_metni = (
+                    "4 saatlik trend de yükseliş yönlü (tam teyitli)" if ust_trend == "yukselis"
+                    else "4 saatlik veri yetersiz, sadece günlük sinyale dayanıyor"
+                )
+                yeni_sinyal = {
+                    "tur": "AL", "fiyat": sonuc["son_fiyat"], "tarih": sonuc["son_tarih"],
+                    "nedenler": sonuc["al_kosullari"], "ust_zaman_dilimi": teyit_metni,
+                }
     else:
         degisim_yuzde = 100 * (sonuc["son_fiyat"] - kayit["giris_fiyati"]) / kayit["giris_fiyati"]
         stop_tetiklendi = degisim_yuzde <= -abs(kayit.get("stop_yuzdesi", STOP_YUZDESI_VARSAYILAN))
