@@ -63,6 +63,10 @@ try:
     from backtest import backtest_calistir  # noqa: E402
     from strateji_olusturucu import KULLANILABILIR_GOSTERGELER, KULLANILABILIR_OPERATORLER  # noqa: E402
     from csm_skor import composite_skor_hesapla, composite_taramasi_yap, en_yuksek_composite_20  # noqa: E402
+    from al_sat_sinyal import (  # noqa: E402
+        takip_listesi_getir, takibe_ekle, takipten_cikar,
+        tum_takipleri_kontrol_et, hisseyi_kontrol_et,
+    )
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -1501,6 +1505,189 @@ class CompositeSinyalEkrani(Screen):
             renk=RENK_NOTR,
         ))
         self.icerik_kutusu.add_widget(uyari_kart)
+# ---------------------------------------------------------------------------
+# EKRAN: Sinyal Takip — çoklu teyitli AL/SAT sinyal motoru
+# ---------------------------------------------------------------------------
+class SinyalTakipEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._otomatik_kontrol_olayi = None
+        self._ilk_giris_yapildi = False
+
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        kok.add_widget(baslik_etiketi("Sinyal Takip", 20))
+
+        kok.add_widget(govde_etiketi(
+            "Not: Bu ekran, uygulama açıkken (veya bu ekrana her girdiğinde) "
+            "kontrol yapar — telefon kapalıyken arka planda çalışmaz. Sadece "
+            "günlük zaman dilimi kullanılır.",
+            renk=RENK_NOTR,
+        ))
+
+        ekle_satiri = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
+        self.sembol_girisi = TextInput(hint_text="Sembol (örn. THYAO)", multiline=False, size_hint_x=0.4)
+        ekle_satiri.add_widget(self.sembol_girisi)
+        self.stop_girisi = TextInput(hint_text="Stop %", text="5", multiline=False,
+                                      input_filter="float", size_hint_x=0.25)
+        ekle_satiri.add_widget(self.stop_girisi)
+        ekle_btn = Button(text="Ekle", size_hint_x=0.35, background_color=RENK_VURGU)
+        ekle_btn.bind(on_release=self._ekle)
+        ekle_satiri.add_widget(ekle_btn)
+        kok.add_widget(ekle_satiri)
+
+        self.kontrol_btn = Button(text="Şimdi Kontrol Et", size_hint_y=None, height=dp(44),
+                                   background_color=(0.10, 0.12, 0.17, 1))
+        self.kontrol_btn.bind(on_release=self._kontrol_et)
+        kok.add_widget(self.kontrol_btn)
+
+        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(22), color=RENK_NOTR)
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.liste_kutusu = BoxLayout(orientation="vertical", spacing=dp(6),
+                                       size_hint_y=None, padding=(0, dp(4)))
+        self.liste_kutusu.bind(minimum_height=self.liste_kutusu.setter("height"))
+        kaydirma.add_widget(self.liste_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+
+    def on_enter(self, *args):
+        self._listeyi_yenile()
+        if self._otomatik_kontrol_olayi is None:
+            self._otomatik_kontrol_olayi = Clock.schedule_interval(self._otomatik_kontrol, 300)
+
+    def on_leave(self, *args):
+        if self._otomatik_kontrol_olayi:
+            self._otomatik_kontrol_olayi.cancel()
+            self._otomatik_kontrol_olayi = None
+
+    def _otomatik_kontrol(self, dt):
+        threading.Thread(target=self._kontrol_calistir, daemon=True).start()
+
+    def _ekle(self, *args):
+        sembol = self.sembol_girisi.text.strip().upper()
+        if not sembol:
+            uyari_goster("Eksik bilgi", "Sembol girmen gerekiyor.")
+            return
+        if not sembol.endswith(".IS"):
+            sembol += ".IS"
+        try:
+            stop = float(self.stop_girisi.text) if self.stop_girisi.text.strip() else 5.0
+        except ValueError:
+            stop = 5.0
+
+        takibe_ekle(sembol, stop_yuzdesi=stop)
+        self.sembol_girisi.text = ""
+        self._listeyi_yenile()
+
+    def _cikar(self, sembol):
+        takipten_cikar(sembol)
+        self._listeyi_yenile()
+
+    def _listeyi_yenile(self, *args):
+        self.liste_kutusu.clear_widgets()
+        liste = takip_listesi_getir()
+
+        if not liste:
+            self.liste_kutusu.add_widget(govde_etiketi(
+                "Henüz takip edilen hisse yok. Yukarıdan bir sembol ekleyebilirsin."
+            ))
+            return
+
+        for kayit in liste:
+            kart = TiklanabilirKart()
+            kart.bind(on_release=lambda inst, k=kayit: self._gecmisi_goster(k))
+
+            durum = "POZİSYONDA" if kayit["pozisyonda"] else "İzleniyor"
+            renk = RENK_OLUMLU if kayit["pozisyonda"] else RENK_NOTR
+
+            kart.add_widget(baslik_etiketi(f"{kayit['sembol']}  —  {durum}", 15))
+
+            if kayit["pozisyonda"] and kayit.get("son_fiyat") and kayit.get("giris_fiyati"):
+                getiri = 100 * (kayit["son_fiyat"] - kayit["giris_fiyati"]) / kayit["giris_fiyati"]
+                getiri_renk = RENK_OLUMLU if getiri >= 0 else RENK_OLUMSUZ
+                kart.add_widget(govde_etiketi(
+                    f"Giriş: {kayit['giris_fiyati']} TL ({kayit.get('giris_tarihi')})  →  "
+                    f"Güncel: {kayit['son_fiyat']} TL  ({'+' if getiri >= 0 else ''}{getiri:.2f}%)",
+                    renk=getiri_renk,
+                ))
+                kart.add_widget(govde_etiketi(f"Stop-Loss: %{kayit.get('stop_yuzdesi', 5)}"))
+            elif kayit.get("son_fiyat"):
+                kart.add_widget(govde_etiketi(
+                    f"Son fiyat: {kayit['son_fiyat']} TL ({kayit.get('son_kontrol', '-')}) — AL sinyali bekleniyor",
+                    renk=renk,
+                ))
+            else:
+                kart.add_widget(govde_etiketi("Henüz kontrol edilmedi.", renk=renk))
+
+            cikar_btn = Button(text="Takipten Çıkar", size_hint_y=None, height=dp(38),
+                                background_color=(0.30, 0.12, 0.12, 1))
+            cikar_btn.bind(on_release=lambda inst, s=kayit["sembol"]: self._cikar(s))
+            kart.add_widget(cikar_btn)
+
+            self.liste_kutusu.add_widget(kart)
+
+    def _kontrol_et(self, *args):
+        self.kontrol_btn.disabled = True
+        self.durum_etiketi.text = "Kontrol ediliyor..."
+        threading.Thread(target=self._kontrol_calistir, daemon=True).start()
+
+    def _kontrol_calistir(self):
+        try:
+            tetiklenenler = tum_takipleri_kontrol_et()
+            Clock.schedule_once(lambda dt: self._kontrol_bitti(tetiklenenler))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Kontrol başarısız", m))
+            Clock.schedule_once(lambda dt: setattr(self.kontrol_btn, "disabled", False))
+
+    def _kontrol_bitti(self, tetiklenenler):
+        self.kontrol_btn.disabled = False
+        self.durum_etiketi.text = ""
+        self._listeyi_yenile()
+
+        if tetiklenenler:
+            satirlar = []
+            for t in tetiklenenler:
+                if t["tur"] == "AL":
+                    satirlar.append(f"{t['sembol']}: AL — {t['fiyat']} TL ({t['tarih']})")
+                else:
+                    satirlar.append(
+                        f"{t['sembol']}: SAT — {t['fiyat']} TL ({t.get('getiri_yuzde')}%) — {t.get('neden')}"
+                    )
+            uyari_goster(f"{len(tetiklenenler)} yeni sinyal!", "\n".join(satirlar))
+        else:
+            uyari_goster("Sonuç", "Yeni bir sinyal tetiklenmedi.")
+
+    def _gecmisi_goster(self, kayit):
+        icerik = BoxLayout(orientation="vertical", padding=dp(15), spacing=dp(10))
+        kaydirma = ScrollView()
+        gecmis_kutusu = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
+        gecmis_kutusu.bind(minimum_height=gecmis_kutusu.setter("height"))
+
+        gecmis = kayit.get("gecmis", [])
+        if not gecmis:
+            gecmis_kutusu.add_widget(govde_etiketi("Henüz sinyal geçmişi yok."))
+        for s in gecmis:
+            if s["tur"] == "AL":
+                etiket = govde_etiketi(f"AL — {s['tarih']} — {s['fiyat']} TL", renk=RENK_OLUMLU)
+            else:
+                etiket = govde_etiketi(
+                    f"SAT — {s['tarih']} — {s['fiyat']} TL  ({s.get('getiri_yuzde')}%)  — {s.get('neden')}",
+                    renk=RENK_OLUMSUZ,
+                )
+            gecmis_kutusu.add_widget(etiket)
+
+        kaydirma.add_widget(gecmis_kutusu)
+        icerik.add_widget(kaydirma)
+
+        kapat = Button(text="Kapat", size_hint_y=None, height=dp(45))
+        icerik.add_widget(kapat)
+
+        pop = Popup(title=f"{kayit['sembol']} — Sinyal Geçmişi", content=icerik, size_hint=(0.9, 0.75))
+        kapat.bind(on_release=pop.dismiss)
+        pop.open()
 
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -1565,9 +1752,9 @@ class AltMenu(BoxLayout):
         sekmeler = [
             ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
             ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Strateji", "strateji"),
-            ("Grafik", "grafik"), ("Composite", "composite"), ("Ayarlar", "ayarlar"),
+            ("Grafik", "grafik"), ("Composite", "composite"), ("Sinyal Takip", "sinyal_takip"),
+            ("Ayarlar", "ayarlar"),
         ]
-
         kaydirma = ScrollView(do_scroll_x=True, do_scroll_y=False, bar_width=dp(3))
         buton_kutusu = BoxLayout(orientation="horizontal", size_hint_x=None, spacing=dp(2))
         buton_kutusu.bind(minimum_width=buton_kutusu.setter("width"))
@@ -1602,8 +1789,8 @@ class AnaLayout(BoxLayout):
         sm.add_widget(StratejiEkrani(name="strateji"))
         sm.add_widget(GrafikEkrani(name="grafik"))
         sm.add_widget(CompositeSinyalEkrani(name="composite"))
+        sm.add_widget(SinyalTakipEkrani(name="sinyal_takip"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
-
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
                             color=RENK_METIN, size_hint_y=None, height=dp(50))
 
