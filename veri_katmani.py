@@ -67,9 +67,9 @@ def _crumb_al():
     return None
 
 
-def fiyat_verisi_getir(sembol, periyot="3mo", deneme_sayisi=3):
+def fiyat_verisi_getir(sembol, periyot="3mo", interval="1d", deneme_sayisi=3):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sembol}"
-    params = {"range": periyot, "interval": "1d"}
+    params = {"range": periyot, "interval": interval}
 
     for deneme in range(deneme_sayisi):
         try:
@@ -207,3 +207,23 @@ def gecmis_finansal_veriler_getir(sembol, yil_sayisi=4):
     except Exception as hata:
         log.warning(f"{sembol} geçmiş finansal verisi alınamadı: {hata}")
         return []
+def saatlik_veri_getir(sembol, periyot="60d"):
+    """
+    Saatlik mum verisi getirir (Yahoo Finance'in 60m interval'ı — gerçek
+    60 dakikalık verinin en yakın karşılığı). Yahoo saatlik veriyi
+    yaklaşık 730 güne kadar destekler, ama biz 60 günle sınırlı tutuyoruz
+    (çoklu zaman dilimi teyidi için bu kadarı yeterli).
+    """
+    return fiyat_verisi_getir(sembol, periyot=periyot, interval="60m")
+
+
+def dortsaatlik_veri_getir(sembol, periyot="60d"):
+    """
+    Yahoo'da doğrudan 4 saatlik interval yok — saatlik veriyi çekip
+    4'erli gruplar halinde yeniden örnekliyoruz (resample).
+    """
+    saatlik = saatlik_veri_getir(sembol, periyot=periyot)
+    dortsaatlik = saatlik.resample("4h").agg({
+        "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum",
+    }).dropna()
+    return dortsaatlik
