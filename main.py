@@ -1613,6 +1613,8 @@ class SinyalTakipEkrani(Screen):
                     renk=getiri_renk,
                 ))
                 kart.add_widget(govde_etiketi(f"Stop-Loss: %{kayit.get('stop_yuzdesi', 5)}"))
+            elif kayit.get("son_uyari"):
+                kart.add_widget(govde_etiketi(kayit["son_uyari"], renk=RENK_NOTR))
             elif kayit.get("son_fiyat"):
                 kart.add_widget(govde_etiketi(
                     f"Son fiyat: {kayit['son_fiyat']} TL ({kayit.get('son_kontrol', '-')}) — AL sinyali bekleniyor",
