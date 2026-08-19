@@ -67,6 +67,7 @@ try:
         takip_listesi_getir, takibe_ekle, takipten_cikar,
         tum_takipleri_kontrol_et, hisseyi_kontrol_et,
     )
+    from patlama_potansiyeli import patlama_taramasi_yap, en_yuksek_patlama_potansiyeli_10  # noqa: E402
     print("CHECKPOINT 7b: detail-screen modules imported", flush=True)
 except Exception:
     print("CHECKPOINT FAILED during project imports:", flush=True)
@@ -1690,6 +1691,106 @@ class SinyalTakipEkrani(Screen):
         pop = Popup(title=f"{kayit['sembol']} — Sinyal Geçmişi", content=icerik, size_hint=(0.9, 0.75))
         kapat.bind(on_release=pop.dismiss)
         pop.open()
+# ---------------------------------------------------------------------------
+# EKRAN: Patlama Potansiyeli — kırılım öncesi kurulum tarayıcı
+# ---------------------------------------------------------------------------
+class PatlamaEkrani(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        kok = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+
+        kok.add_widget(baslik_etiketi("Patlama Potansiyeli", 20))
+
+        kok.add_widget(govde_etiketi(
+            "UYARI: Bu bir olasılık skorudur, kesinlik değil. Hiçbir teknik "
+            "gösterge kombinasyonu bir hissenin yükseleceğini garanti edemez "
+            "— haberler, bilanço açıklamaları ve büyük yatırımcı hareketleri "
+            "teknik analizin göremediği faktörlerdir. Stop-loss kullanmadan "
+            "işlem yapma. Bu yatırım tavsiyesi değildir.",
+            renk=RENK_OLUMSUZ,
+        ))
+
+        self.tara_btn = Button(
+            text="Top 10 Tara (tüm BIST — birkaç dakika sürebilir)",
+            size_hint_y=None, height=dp(46), background_color=RENK_VURGU,
+        )
+        self.tara_btn.bind(on_release=self._taramayi_baslat)
+        kok.add_widget(self.tara_btn)
+
+        self.ilerleme = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(8))
+        kok.add_widget(self.ilerleme)
+
+        self.durum_etiketi = Label(text="", size_hint_y=None, height=dp(22), color=RENK_NOTR)
+        self.durum_etiketi.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
+        kok.add_widget(self.durum_etiketi)
+
+        kaydirma = ScrollView()
+        self.sonuc_kutusu = BoxLayout(orientation="vertical", spacing=dp(8),
+                                       size_hint_y=None, padding=(0, dp(4)))
+        self.sonuc_kutusu.bind(minimum_height=self.sonuc_kutusu.setter("height"))
+        kaydirma.add_widget(self.sonuc_kutusu)
+        kok.add_widget(kaydirma)
+
+        self.add_widget(kok)
+
+    def _taramayi_baslat(self, *args):
+        self.tara_btn.disabled = True
+        self.ilerleme.value = 0
+        self.durum_etiketi.text = "Taranıyor..."
+        self.sonuc_kutusu.clear_widgets()
+        threading.Thread(target=self._tara, daemon=True).start()
+
+    def _ilerleme_callback(self, tamamlanan, toplam, sembol):
+        yuzde = (tamamlanan / toplam) * 100 if toplam else 0
+        Clock.schedule_once(lambda dt: self._ilerleme_guncelle(yuzde, tamamlanan, toplam))
+
+    def _ilerleme_guncelle(self, yuzde, tamamlanan, toplam):
+        self.ilerleme.value = yuzde
+        self.durum_etiketi.text = f"{tamamlanan}/{toplam} tarandı..."
+
+    def _tara(self):
+        try:
+            sonuclar = patlama_taramasi_yap(max_paralel_islem=6, ilerleme_callback=self._ilerleme_callback)
+            en_iyiler = en_yuksek_patlama_potansiyeli_10(sonuclar, adet=10)
+            Clock.schedule_once(lambda dt: self._sonucu_goster(en_iyiler, len(sonuclar)))
+        except Exception as hata:
+            mesaj = str(hata)
+            Clock.schedule_once(lambda dt, m=mesaj: uyari_goster("Tarama başarısız", m))
+            Clock.schedule_once(lambda dt: setattr(self.tara_btn, "disabled", False))
+
+    def _sonucu_goster(self, en_iyiler, toplam_taranan):
+        self.tara_btn.disabled = False
+        self.durum_etiketi.text = f"{toplam_taranan} hisse tarandı. En yüksek 10 potansiyel:"
+        self.sonuc_kutusu.clear_widgets()
+
+        if not en_iyiler:
+            self.sonuc_kutusu.add_widget(govde_etiketi("Sonuç yok."))
+            return
+
+        for i, s in enumerate(en_iyiler, start=1):
+            kart = TiklanabilirKart()
+            kart.bind(on_release=lambda inst, sembol=s["sembol"]: self._hisseye_git(sembol))
+
+            skor = s["skor"]
+            renk = RENK_OLUMLU if skor >= 65 else (RENK_NOTR if skor >= 45 else RENK_OLUMSUZ)
+
+            kart.add_widget(baslik_etiketi(
+                f"{i}. {s['sembol']}  —  {skor}/100  ({s['son_fiyat']:.2f} TL)", 15
+            ))
+
+            en_guclu_3 = sorted(
+                [b for b in s["bilesenler"] if b[2] is not None], key=lambda b: b[2], reverse=True
+            )[:3]
+            for isim, ham, puan, agirlik in en_guclu_3:
+                kart.add_widget(govde_etiketi(f"{isim}: {ham}", renk=renk))
+
+            self.sonuc_kutusu.add_widget(kart)
+
+    def _hisseye_git(self, sembol):
+        detay_ekrani = self.manager.get_screen("hisse_detay")
+        detay_ekrani.hisseyi_yukle(sembol)
+        self.manager.transition = SlideTransition(duration=0.15)
+        self.manager.current = "hisse_detay"
 
 class AyarlarEkrani(Screen):
     def __init__(self, **kwargs):
@@ -1755,7 +1856,7 @@ class AltMenu(BoxLayout):
             ("Piyasa", "piyasa"), ("Hisseler", "hisseler"), ("Watchlist", "watchlist"),
             ("Alarmlar", "alarmlar"), ("Sektör", "sektor"), ("Strateji", "strateji"),
             ("Grafik", "grafik"), ("Composite", "composite"), ("Sinyal Takip", "sinyal_takip"),
-            ("Ayarlar", "ayarlar"),
+            ("Patlama", "patlama"), ("Ayarlar", "ayarlar"),
         ]
         kaydirma = ScrollView(do_scroll_x=True, do_scroll_y=False, bar_width=dp(3))
         buton_kutusu = BoxLayout(orientation="horizontal", size_hint_x=None, spacing=dp(2))
@@ -1792,6 +1893,7 @@ class AnaLayout(BoxLayout):
         sm.add_widget(GrafikEkrani(name="grafik"))
         sm.add_widget(CompositeSinyalEkrani(name="composite"))
         sm.add_widget(SinyalTakipEkrani(name="sinyal_takip"))
+        sm.add_widget(PatlamaEkrani(name="patlama"))
         sm.add_widget(AyarlarEkrani(name="ayarlar"))
         ust_baslik = Label(text="BIST Analiz Merkezi", font_size=dp(20), bold=True,
                             color=RENK_METIN, size_hint_y=None, height=dp(50))
